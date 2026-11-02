@@ -1,0 +1,6 @@
+{
+  "ranges": [
+    {"file": "catalog.py", "start": 18, "end": 18, "kind": "modification",
+     "expect": "start = page_number * page_size"}
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "ranges": [
+    {"file": "config.py", "start": 7, "end": 7, "kind": "deletion",
+     "expect": "value = settings.get(\"port\")"}
+  ]
+}
