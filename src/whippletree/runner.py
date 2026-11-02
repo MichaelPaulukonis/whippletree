@@ -42,8 +42,21 @@ def run_review(
             def on_call(event, case_id=case.id, rep=rep):
                 trace.write("call", case_id=case_id, repeat=rep, **event)
 
-            result = review(case, provider, model, limits=limits, settings=settings,
-                            on_call=on_call)
+            try:
+                result = review(case, provider, model, limits=limits, settings=settings,
+                                on_call=on_call)
+            except Exception as e:  # one bad case must not sink the run
+                c = Counters()
+                cost, source = cost_for(model_spec, c)
+                record = CaseRecord(
+                    case_id=case.id, repeat=rep, findings=(), truth=case.ground_truth,
+                    stop="error", tokens=0, cost_usd=cost, cost_source=source,
+                    tool_errors=0, parse_failures=0, errored=True,
+                )
+                trace.write("case", record=record, counters=c, padding=case.padding,
+                            error=repr(e))
+                records.append(record)
+                continue
             c = result.loop.counters
             cost, source = cost_for(model_spec, c)
             record = CaseRecord(

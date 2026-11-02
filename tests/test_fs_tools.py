@@ -128,3 +128,41 @@ def test_grep_does_not_read_git_through_symlink(tmp_path):
     (tmp_path / "cfg").symlink_to(tmp_path / ".git" / "config")
     grep = {t.name: t for t in build_fs_tools(ToolEnv(tmp_path))}["grep"]
     assert grep.fn({"pattern": "secret-remote"}) == "(no matches)"
+
+
+@pytest.fixture
+def unreadable(tmp_path):
+    """A mode-000 file next to a readable one; mode restored so tmp cleanup works."""
+    bad = tmp_path / "locked.txt"
+    bad.write_text("needle\n")
+    (tmp_path / "ok.txt").write_text("needle\n")
+    bad.chmod(0)
+    yield tmp_path
+    bad.chmod(0o644)
+
+
+def test_read_file_unreadable_is_tool_error(unreadable):
+    read = {t.name: t for t in build_fs_tools(ToolEnv(unreadable))}["read_file"]
+    with pytest.raises(ToolError, match="cannot read locked.txt: Permission denied"):
+        read.fn({"path": "locked.txt"})
+
+
+def test_grep_skips_unreadable_files(unreadable):
+    grep = {t.name: t for t in build_fs_tools(ToolEnv(unreadable))}["grep"]
+    assert grep.fn({"pattern": "needle"}) == "ok.txt:1:needle"
+
+
+def test_list_dir_unreadable_dir_is_tool_error(tmp_path):
+    (tmp_path / "d").mkdir()
+    (tmp_path / "d").chmod(0)
+    try:
+        ls = {t.name: t for t in build_fs_tools(ToolEnv(tmp_path))}["list_dir"]
+        with pytest.raises(ToolError, match="cannot list d: Permission denied"):
+            ls.fn({"path": "d"})
+    finally:
+        (tmp_path / "d").chmod(0o755)
+
+
+def test_read_file_range_past_end_says_so(tools):
+    out = tools["read_file"].fn({"path": "pkg/a.py", "start": 10})
+    assert out == "(no lines in range; file has 4 lines)"

@@ -58,9 +58,14 @@ def build_fs_tools(env: ToolEnv) -> list[Tool]:
         path = resolve(env, rel)
         if not path.is_file():
             raise ToolError(f"not a file: {rel}")
-        lines = path.read_text(errors="replace").splitlines()
+        try:
+            lines = path.read_text(errors="replace").splitlines()
+        except OSError as e:
+            raise ToolError(f"cannot read {rel}: {e.strerror}") from e
         start = max(_optional_int(args, "start", 1), 1)
         end = min(_optional_int(args, "end", len(lines)), len(lines))
+        if start > end:
+            return f"(no lines in range; file has {len(lines)} lines)"
         return "\n".join(f"{n}\t{lines[n - 1]}" for n in range(start, end + 1))
 
     def list_dir(args: dict) -> str:
@@ -68,7 +73,11 @@ def build_fs_tools(env: ToolEnv) -> list[Tool]:
         path = resolve(env, rel)
         if not path.is_dir():
             raise ToolError(f"not a directory: {rel}")
-        names = (c.name + ("/" if c.is_dir() else "") for c in path.iterdir() if c.name != ".git")
+        try:
+            names = [c.name + ("/" if c.is_dir() else "") for c in path.iterdir()
+                     if c.name != ".git"]
+        except OSError as e:
+            raise ToolError(f"cannot list {rel}: {e.strerror}") from e
         return "\n".join(sorted(names))
 
     def grep(args: dict) -> str:
@@ -84,13 +93,16 @@ def build_fs_tools(env: ToolEnv) -> list[Tool]:
         if base.is_file():
             files = [base]
         else:
-            files = sorted(
-                f
-                for f in base.rglob("*")
-                if f.is_file()
-                and ".git" not in f.relative_to(root).parts
-                and _inside_no_git(root, f)
-            )
+            try:
+                files = sorted(
+                    f
+                    for f in base.rglob("*")
+                    if f.is_file()
+                    and ".git" not in f.relative_to(root).parts
+                    and _inside_no_git(root, f)
+                )
+            except OSError as e:
+                raise ToolError(f"cannot list {rel}: {e.strerror}") from e
         out = []
         for f in files:
             try:

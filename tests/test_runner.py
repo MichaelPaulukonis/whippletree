@@ -71,3 +71,29 @@ def test_case_event_has_transcript(case, tmp_path):
 def test_cost_for_free_provider_is_labelled_free():
     c = Counters(steps=1, input_tokens=100, output_tokens=10)
     assert cost_for("ollama:llama3.1:8b", c) == (0.0, "free")
+
+
+def test_one_failing_case_does_not_sink_the_run(tmp_path):
+    cases = []
+    for name in ("one", "two"):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "a.py").write_text("x = 1\n")
+        cases.append(Case(id=f"t/{name}", dataset="t", checkout_path=d, diff="",
+                          ground_truth=(Range("a.py", 1, 1),)))
+    provider = FakeProvider([
+        RuntimeError("boom"),
+        resp(calls=[call("submit_findings", {"findings": [FINDING]})]),
+    ])
+    path = tmp_path / "run.jsonl"
+    with TraceWriter(path) as trace:
+        records = run_review(cases, "ollama:x", provider, trace)
+        trace.write("end", cases=len(records))
+    bad, good = records
+    assert (bad.stop, bad.errored, bad.findings) == ("error", True, ())
+    assert (bad.cost_usd, bad.cost_source) == (0.0, "none")
+    assert good.stop == "done" and not good.errored
+    events = read_trace(path)
+    case_events = [e for e in events if e["kind"] == "case"]
+    assert case_events[0]["error"] == "RuntimeError('boom')"
+    assert events[-1]["kind"] == "end"
