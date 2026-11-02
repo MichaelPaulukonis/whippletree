@@ -32,7 +32,7 @@ v0 itself tests none of these directly; it produces the read-only baseline every
 | 1b | Docker sandbox per bug, `run_tests` tool, network off (verifier) | separate |
 | 1c | Native `anthropic` + `google-genai` adapters, benchmarked vs OpenRouter | separate |
 | 2 | Coder -> test-writer -> reviewer pipeline on SWE-bench Verified subset | separate |
-| later | Context management / token budgets (C); safety and permissions (D); optional REPL | separate |
+| later | Diff-review mode (SZZ bug-introducing commits); context management / token budgets (C); safety and permissions (D); optional REPL | separate |
 
 ## Decisions
 
@@ -53,9 +53,11 @@ whippletree/
       openai_compat.py   OpenRouter + Ollama
     loop.py              agent loop
     tools/
-      fs.py              read_file, list_dir, grep (confined to case checkout)
+      env.py             ToolEnv (1a: checkout_path; 1b: + sandbox handle)
+      fs.py              read_file, list_dir, grep (built per case from ToolEnv)
     roles/
-      reviewer.py        system prompt, findings schema, parsing + repair
+      reviewer.py        system prompt, submit_findings terminal tool + validation
+    baseline.py          dumb reviewer (random lines in target files) - scoring sanity check
     datasets/
       base.py            Case, GroundTruth
       bugsinpy.py
@@ -77,35 +79,44 @@ whippletree/
 Knows nothing about the loop or datasets. Model strings are `provider:model-id` (e.g. `openrouter:google/gemini-2.5-pro`, `ollama:llama3.1:8b`).
 OpenRouter requests pin routing: `provider: {order: [...], allow_fallbacks: false}` when a backend is configured, and request usage accounting so `cost_usd` is populated.
 
-**loop** - `run(provider, model, system, messages, tools, limits) -> LoopResult{final_text, transcript, stop, counters}`.
+**loop** - `run(provider, model, system, messages, tools, limits) -> LoopResult{result, transcript, stop, counters}`.
 Repeats: call model -> if tool calls, dispatch each, append results -> continue.
-Stops on: no tool calls (`stop=done`), `max_steps` (`stop=max_steps`), `token_budget` exceeded (`stop=budget`), wall-clock (`stop=timeout`), or provider failure after retries (`stop=error`).
-Counters: steps, tool_calls, tool_errors, retries, truncated_bytes.
+A tool may be marked **terminal**: when it returns successfully, the loop stops with `stop=done` and its return value becomes `LoopResult.result`. A terminal tool that fails validation returns an ordinary error string, so the model gets another turn inside the same step and token limits.
+Stops on: terminal tool succeeded (`stop=done`), a turn with no tool calls after one nudge (`stop=no_submit`), `max_steps` (`stop=max_steps`), `token_budget` exceeded (`stop=budget`), wall-clock (`stop=timeout`), or provider failure after retries (`stop=error`).
+Counters: steps, tool_calls, tool_errors, retries, truncated_bytes, nudges.
+The loop is flat and single-agent. It knows nothing about roles, datasets, or where tools execute.
 
-**tools** - plain functions with a JSON schema each. All paths resolved inside the case checkout; anything escaping it is a tool error. Output truncated at `max_tool_output_bytes` (default 20 KB) with a `[truncated N bytes]` marker.
+**tools** - plain functions with a JSON schema each, built per case from a `ToolEnv`. In 1a, `ToolEnv` holds `checkout_path`; in 1b it also holds the Docker sandbox handle, so the loop never changes between local and container execution. All paths resolve inside the checkout; anything escaping it is a tool error. Output truncated at `max_tool_output_bytes` (default 20 KB) with a `[truncated N bytes]` marker.
 
-**roles/reviewer** - builds the system prompt and user message (the diff plus a short instruction), and parses the final answer into findings:
-`Finding = {file, line, claim, confidence: 0..1}`. Final answer must be a JSON array in a fenced block. One repair prompt if parsing fails; second failure means zero findings and `parse_failures += 1`.
+**roles/reviewer** - builds the system prompt and user message: the list of target files plus a short instruction to review them for bugs in the context of the repository. Provides the terminal tool `submit_findings(findings: list[Finding])`, where `Finding = {file, line, claim, confidence: 0..1}`. Validation checks the schema, types, and confidence range; it does not check that the file or line exists (that would leak hints). Validation failures count as `parse_failures` as well as `tool_errors`. If the loop ends with `stop=no_submit`, the case scores zero findings.
 
-**datasets** - `Case = {id, dataset, checkout_path, diff, ground_truth: list[{file, start, end}]}`.
+**datasets** - `Case = {id, dataset, checkout_path, target_files: list[str], diff: str | None, ground_truth: list[{file, start, end}]}`. `diff` is `None` in M1 (whole-file review); it is kept for later diff-review modes.
 
-- BugsInPy: the diff shown is the reverse of the fixing commit (i.e. the bug-introducing change); the checkout is the buggy commit; ground truth is the fix's touched ranges in buggy-version line numbers. Repos are cloned to `~/.cache/whippletree/bugsinpy/`.
-- Seeded: same shape, stored under `datasets/seeded/<case-id>/` with `diff.patch`, `truth.json`, and a small source tree.
+- BugsInPy: the checkout is the buggy commit; `target_files` are the files the fix touched; ground truth is the fix's touched ranges in buggy-version line numbers. A hunk that only adds lines (e.g. a missing guard clause) has no buggy-version lines, so it becomes a zero-width range at the insertion point (`start = end =` the line before the insertion). The reversed fix diff is never shown: it would point straight at the bug. Repos are cloned to `~/.cache/whippletree/bugsinpy/`.
+- Seeded: same shape, stored under `datasets/seeded/<case-id>/` with `truth.json` (target files + ranges) and a small source tree.
 
 **scoring** - pure function `score(findings, ground_truth, line_window=5) -> CaseScore`.
-A finding hits a ground-truth range if the file matches and the line falls within `[start - N, end + N]`. Multiple hits on one range = one TP plus `dupes`. Non-hitting findings = FP. Case recall = 1 if any range hit.
+A finding hits a ground-truth range if the file matches and the line falls within `[start - N, end + N]`. Because the reviewer reads whole files (often hundreds of lines), this is a real localization test. Multiple hits on one range = one TP plus `dupes`. Non-hitting findings = FP. Case recall = 1 if any range hit.
 Run-level: recall (per case), precision (per finding), F1, $/TP, tokens/TP, tool_errors, parse_failures, errored cases (excluded from precision/recall, reported separately). PR curve over confidence thresholds.
+No automated matching of `claim` text against commit messages (too brittle; fix messages are often just "Fix #123").
+
+**baseline** - `whippletree run baseline --dataset ... --strategy random` emits K random-line findings per target file, skipping the loop and providers. Its scores set the floor every model must beat and confirm the scoring can't be gamed by guessing lines.
 
 **traces** - one JSONL file per run in `runs/<run-id>.jsonl`. First line is a header: run id, git SHA, model, served_by, settings, dataset + version, limits. Then one line per model call (tokens, cost, latency, stop_reason, tool calls) and one per case result. Write-only; `report` reads it back.
 
 **cli**
 
 - `whippletree run review --dataset {bugsinpy,seeded} --model <provider:model> [--limit N] [--repeat K] [--case ID]`
+- `whippletree run baseline --dataset {bugsinpy,seeded} --strategy random [--limit N]`
 - `whippletree report <run-id> [<run-id> ...]` - prints a metrics table; side-by-side for multiple runs.
 
 ### Data flow
 
-dataset -> Case -> reviewer builds prompt -> loop (provider + tools on checkout) -> final text -> parse findings -> score vs ground truth -> trace. `report` aggregates traces.
+dataset -> Case -> ToolEnv + tools -> reviewer builds prompt -> loop (provider + tools) -> `submit_findings` result -> score vs ground truth -> trace. `report` aggregates traces.
+
+### Phase 2 orchestration (noted now, built later)
+
+Phase 2 (coder -> test-writer -> reviewer) is a sequential Python pipeline that calls `loop.run()` once per role and passes artifacts (diffs, test files, findings) between calls. No nested subagents-as-tools. That keeps token attribution, cost, and trace files flat across phases.
 
 ## Error handling and limits
 
@@ -114,29 +125,32 @@ dataset -> Case -> reviewer builds prompt -> loop (provider + tools on checkout)
 | 429 / 5xx | retry, exponential backoff, 3 tries | `retries` |
 | Provider still failing | case marked errored | `stop=error`, excluded from P/R |
 | Bad tool-call JSON / unknown tool / path escape | error string returned to model as tool result | `tool_errors` |
-| Unparseable findings | one repair prompt, then zero findings | `parse_failures` |
+| Invalid `submit_findings` call | error returned as tool result; model retries within limits | `parse_failures`, `tool_errors` |
+| Turn with no tool calls, no submission | one nudge ("call `submit_findings`"), then stop with zero findings | `nudges`, `stop=no_submit` |
 | Oversized tool output | truncated with marker | `truncated_bytes` |
-| Budget / steps / time exhausted | stop; partial findings still parsed and scored | `stop=budget | max_steps | timeout` |
+| Budget / steps / time exhausted | stop; zero findings (nothing was submitted) | `stop=budget | max_steps | timeout` |
 
 Defaults: `max_steps=20`, `token_budget=200_000`, `wall_clock=300s`, temperature 0 where supported.
 Cost: provider-reported `cost_usd` when present, else `pricing.py` table; the trace records which source was used.
 
 ## Known biases (reported, not hidden)
 
-1. FPs may be real bugs BugsInPy doesn't label. v0: hand-audit ~20 FPs per model, report the real-bug share. No LLM judge.
-2. Diffs are small and focused, so easier than real PRs. Later: bury the bug among unrelated commits.
-3. Contamination: models may have seen these repos. The seeded set is the control.
-4. One BugsInPy bug per case; some fixes touch several hunks - all ranges count as the one bug for recall.
+1. Line matching can't judge the diagnosis. v0 hand-audits ~20 FPs per model (report the share that are real, unlabeled bugs) and ~20 TPs per model (report the "right line, wrong diagnosis" rate). No LLM judge.
+2. Telling the reviewer which files to read hands it file-level localization for free. Recall here means "found the bug given the right file", not "found the bug in the repo".
+3. Whole-file auditing is not the same task as reviewing a PR diff, which is what the primary goal (a review policy) is about. Later diff-review mode: find the real bug-introducing commit with SZZ (blame the fix's lines back to the commit that last touched them) and review that diff. SZZ is the standard method in defect research, and noisy, which gets reported too.
+4. Contamination: models may have seen these repos. The seeded set is the control.
+5. One BugsInPy bug per case; some fixes touch several hunks - all ranges count as the one bug for recall.
 
 ## Testing
 
 Test-first throughout.
 
 - **providers:** recorded JSON responses as fixtures; no network.
-- **loop:** fake provider returning a scripted sequence; one test per stop reason and per error-handling row.
-- **scoring:** table-driven tests (hits, window edges, dupes, FPs, empty).
-- **datasets:** one tiny fixture case per loader.
-- **reviewer parsing:** valid, fenced, malformed, repaired.
+- **loop:** fake provider returning a scripted sequence; one test per stop reason and per error-handling row, including terminal-tool success, terminal-tool validation failure then retry, and nudge then `no_submit`.
+- **scoring:** table-driven tests (hits, window edges, zero-width insertion ranges, dupes, FPs, empty).
+- **datasets:** one tiny fixture case per loader, including an add-only fix hunk.
+- **reviewer:** `submit_findings` validation (valid, missing keys, wrong types, confidence out of range).
+- **baseline:** deterministic under a fixed seed.
 - **live smoke (marked `live`, not in CI):** `whippletree run review --dataset seeded --model ollama:llama3.1:8b --limit 1`.
 
 ## Repo hygiene
@@ -156,4 +170,5 @@ Code execution / Docker, native Anthropic and Gemini adapters, coder and test-wr
 
 - `whippletree run review` runs end to end on the seeded set with an Ollama model and on >= 20 BugsInPy cases with at least two OpenRouter models.
 - `whippletree report` prints recall, precision, F1, $/TP, tokens/TP, tool_errors, parse_failures for each.
+- The random baseline has been run on the same cases, and every model is reported next to it.
 - Unit tests pass in CI; no secrets in the repo history (gitleaks clean).
