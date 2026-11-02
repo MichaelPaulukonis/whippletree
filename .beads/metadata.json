@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "whippletree",
+  "project_id": "a611a4da-8cc9-4a06-8158-1a0f203a9a99"
+}
