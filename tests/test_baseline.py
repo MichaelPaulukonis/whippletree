@@ -42,3 +42,10 @@ def test_baseline_is_deterministic_for_a_seed():
 
 def test_baseline_caps_at_available_lines():
     assert len(baseline_findings(_case(), 99, random.Random(0))) == 4
+
+
+def test_dashes_inside_hunk_are_content_not_headers():
+    diff = ("diff --git a/s.sql b/s.sql\n--- a/s.sql\n+++ b/s.sql\n"
+            "@@ -1,3 +1,3 @@\n a\n--- foo\n+++ x\n c\n")
+    # '--- foo' is a deletion after line 1 -> (s.sql, 1); '+++ x' is added head line 2.
+    assert changed_lines(diff) == [("s.sql", 1), ("s.sql", 2)]

@@ -12,15 +12,21 @@ def changed_lines(diff: str) -> list[tuple[str, int]]:
     """(file, head line) for every added line, plus the line before each removal point."""
     out = set()
     file, line = None, 0
+    # ---/+++ are file headers only outside a hunk (also true before any diff --git line).
+    in_header = True
     for raw in diff.splitlines():
-        if raw.startswith("+++ "):
+        if raw.startswith("diff --git "):
+            in_header = True
+            continue
+        if in_header and raw.startswith("+++ "):
             path = raw[4:].strip()
             file = None if path == "/dev/null" else path.removeprefix("b/")
             continue
-        if raw.startswith("--- "):
+        if in_header and raw.startswith("--- "):
             continue
         m = _HUNK.match(raw)
         if m:
+            in_header = False
             line = int(m.group(1))
             continue
         if file is None:

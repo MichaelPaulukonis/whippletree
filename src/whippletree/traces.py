@@ -23,7 +23,7 @@ class TraceWriter:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
-        self._file = path.open("w")
+        self._file = path.open("x")
 
     def write(self, kind: str, **data) -> None:
         self._file.write(json.dumps({"kind": kind, **data}, default=_default) + "\n")

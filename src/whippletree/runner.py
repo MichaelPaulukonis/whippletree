@@ -5,7 +5,7 @@ import random
 from whippletree.baseline import baseline_findings
 from whippletree.case import Case
 from whippletree.loop import Counters, Limits
-from whippletree.pricing import estimate
+from whippletree.pricing import FREE_PROVIDERS, estimate
 from whippletree.providers.base import Provider, parse_model
 from whippletree.roles.reviewer import review
 from whippletree.scoring import CaseRecord
@@ -21,7 +21,9 @@ def cost_for(model_spec: str, c: Counters) -> tuple[float | None, str]:
     if c.cost_reported_calls == c.steps:
         return c.cost_usd, "provider"
     est = estimate(model_spec, c.input_tokens, c.output_tokens)
-    return (est, "table") if est is not None else (None, "unknown")
+    if est is None:
+        return None, "unknown"
+    return est, "free" if parse_model(model_spec)[0] in FREE_PROVIDERS else "table"
 
 
 def run_review(
@@ -58,7 +60,7 @@ def run_review(
                 errored=result.loop.stop in ERRORED_STOPS,
             )
             trace.write("case", record=record, counters=c, padding=case.padding,
-                        error=result.loop.error)
+                        error=result.loop.error, transcript=result.loop.transcript)
             records.append(record)
     return records
 

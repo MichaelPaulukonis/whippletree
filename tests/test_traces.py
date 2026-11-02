@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from whippletree.case import Range
 from whippletree.traces import TraceWriter, new_run_id, read_trace
 
@@ -18,3 +20,11 @@ def test_run_ids_are_unique_and_sortable():
     a, b = new_run_id(), new_run_id()
     assert a != b
     assert a[:8].isdigit()
+
+
+def test_existing_trace_is_not_overwritten(tmp_path):
+    path = tmp_path / "r.jsonl"
+    path.write_text("keep")
+    with pytest.raises(FileExistsError):
+        TraceWriter(path)
+    assert path.read_text() == "keep"

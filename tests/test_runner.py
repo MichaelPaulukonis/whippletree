@@ -3,6 +3,7 @@ import random
 import pytest
 
 from tests.fakes import FakeProvider, call, resp
+from whippletree import pricing
 from whippletree.case import Case, Range
 from whippletree.loop import Counters
 from whippletree.runner import cost_for, run_baseline, run_review
@@ -46,11 +47,27 @@ def test_cost_for_prefers_provider_cost():
     assert cost_for("openrouter:x/y", c) == (0.5, "provider")
 
 
-def test_cost_for_falls_back_to_table():
-    c = Counters(steps=1, input_tokens=100, output_tokens=10)
-    assert cost_for("ollama:llama3.1:8b", c) == (0.0, "table")
-    assert cost_for("openrouter:x/y", c) == (None, "unknown")
+def test_cost_for_falls_back_to_table(monkeypatch):
+    monkeypatch.setitem(pricing.PRICES, "openrouter:x/y", (1.0, 2.0))
+    c = Counters(steps=1, input_tokens=1_000_000, output_tokens=0)
+    assert cost_for("openrouter:x/y", c) == (1.0, "table")
+    assert cost_for("openrouter:other/z", c) == (None, "unknown")
 
 
 def test_cost_for_no_calls_is_free():
     assert cost_for("openrouter:x/y", Counters()) == (0.0, "none")
+
+
+def test_case_event_has_transcript(case, tmp_path):
+    provider = FakeProvider([resp(calls=[call("submit_findings", {"findings": []})])])
+    path = tmp_path / "t.jsonl"
+    with TraceWriter(path) as trace:
+        run_review([case], "ollama:x", provider, trace)
+    event = [e for e in read_trace(path) if e["kind"] == "case"][0]
+    assert event["transcript"][0]["role"] == "system"
+    assert "reviewing a pull request" in event["transcript"][0]["content"]
+
+
+def test_cost_for_free_provider_is_labelled_free():
+    c = Counters(steps=1, input_tokens=100, output_tokens=10)
+    assert cost_for("ollama:llama3.1:8b", c) == (0.0, "free")
