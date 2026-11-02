@@ -19,7 +19,7 @@
 ```
 pyproject.toml                       project, scripts, pytest + ruff config
 .gitignore  .env.example  LICENSE  README.md
-.githooks/pre-commit                 gitleaks on staged changes
+.beads/hooks/pre-commit              beads hook + gitleaks on staged changes (bd owns core.hooksPath)
 .github/workflows/ci.yml             ruff + pytest (no live tests)
 src/whippletree/
   __init__.py
@@ -261,7 +261,7 @@ git add .githooks/pre-commit
 git commit -m "chore: gitleaks pre-commit hook"
 ```
 
-Note for anyone cloning: run `git config core.hooksPath .githooks` once (goes in README in Task 16).
+Done differently in execution: bd sets `core.hooksPath` to `.beads/hooks`, so the gitleaks check was appended to `.beads/hooks/pre-commit` outside the beads-managed block (commit 96b2aad). No `.githooks/` directory.
 
 ---
 
@@ -2984,7 +2984,7 @@ Whippletree is a self-built coding-agent harness. Milestone 1 benchmarks code re
 
 ```bash
 uv sync
-git config core.hooksPath .githooks   # gitleaks pre-commit hook
+git config core.hooksPath .beads/hooks   # beads + gitleaks pre-commit hook
 cp .env.example .env                  # add OPENROUTER_API_KEY for OpenRouter models
 
 uv run whippletree run baseline --dataset seeded
