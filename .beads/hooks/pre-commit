@@ -57,3 +57,10 @@ if command -v bd >/dev/null 2>&1; then
   if [ "$_bd_exit" -ne 0 ]; then exit "$_bd_exit"; fi
 fi
 # --- END BEADS INTEGRATION v1.3.1 ---
+
+# Block commits that contain secrets. (Outside the beads-managed block so bd upgrades keep it.)
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks git --pre-commit --staged --redact --no-banner || exit 1
+else
+  echo >&2 "gitleaks not installed - secret scan skipped (brew install gitleaks)"
+fi
