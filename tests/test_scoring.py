@@ -89,7 +89,7 @@ def test_nothing_found_gives_no_per_tp_numbers():
 
 def test_zero_findings_means_precision_undefined_not_zero():
     m = aggregate([rec([], MOD)])
-    assert (m.precision, m.recall, m.f1) == (None, 0.0, None)
+    assert (m.precision, m.recall, m.f1) == (None, 0.0, 0.0)
     assert m.pr_curve[0] == (0.0, None, 0.0)
 
 

@@ -88,7 +88,8 @@ def make_submit_tool() -> Tool:
 
 
 def build_system_prompt(limits: Limits | None = None) -> str:
-    return SYSTEM_PROMPT.format(max_steps=(limits or Limits()).max_steps)
+    # Not str.format: the prompt may grow literal braces (e.g. a JSON example).
+    return SYSTEM_PROMPT.replace("{max_steps}", str((limits or Limits()).max_steps))
 
 
 def build_user_message(case: Case) -> str:

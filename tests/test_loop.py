@@ -265,3 +265,13 @@ def test_warning_can_be_disabled():
     script = [resp(calls=[call("echo", {})]), resp(calls=[call("submit", {"v": 1})])]
     _, r = go(script, [echo, submit], Limits(max_steps=2), warning=None)
     assert (r.stop, r.counters.warnings) == ("done", 0)
+
+
+def test_timeout_before_dispatch_still_answers_every_tool_call():
+    r = slow_run([resp(calls=[call("echo", {}, id="a"), call("echo", {}, id="b")])],
+                 [echo, submit])
+    assert r.stop == "timeout"
+    asked = [tc["id"] for m in r.transcript for tc in m.get("tool_calls") or []]
+    answered = {m["tool_call_id"]: m["content"] for m in r.transcript if m["role"] == "tool"}
+    assert asked == ["a", "b"]
+    assert answered == {"a": "not run: time limit reached", "b": "not run: time limit reached"}

@@ -107,3 +107,9 @@ def test_diff_fence_is_longer_than_any_backtick_run_in_it(case):
                                   diff=diff, ground_truth=()))
     assert msg.endswith(f"`````diff\n{diff}\n`````")
     assert build_user_message(case).endswith("```diff\n+x = 1\n```")
+
+
+def test_system_prompt_tolerates_literal_braces(monkeypatch):
+    import whippletree.roles.reviewer as reviewer
+    monkeypatch.setattr(reviewer, "SYSTEM_PROMPT", 'e.g. {"file": "a.py"}; {max_steps} turns')
+    assert reviewer.build_system_prompt(Limits(max_steps=4)) == 'e.g. {"file": "a.py"}; 4 turns'

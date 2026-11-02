@@ -16,6 +16,7 @@ from whippletree.tools.base import Submit, Tool, ToolError
 NUDGE = "You have not submitted. Call submit_findings to complete your review."
 WARNING = "Limit almost reached: call submit_findings now with what you have."
 WARN_AT_BUDGET_SHARE = 0.8
+NOT_RUN = "not run: time limit reached"
 
 _NOTHING = object()
 
@@ -142,6 +143,9 @@ def run(
         if out_of_time and not any(
             tc.name in by_name and by_name[tc.name].terminal for tc in resp.tool_calls
         ):
+            # Answer every call so the transcript stays a valid conversation to replay.
+            for tc in resp.tool_calls:
+                transcript.append({"role": "tool", "tool_call_id": tc.id, "content": NOT_RUN})
             return finish("timeout")
 
         # Every tool call must get a result message, even after a successful submit.

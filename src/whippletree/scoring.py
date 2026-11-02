@@ -85,6 +85,7 @@ class CaseRecord:
 @dataclass(frozen=True)
 class RunMetrics:
     """None means undefined (no findings, or no non-errored cases), not zero.
+    Exception: f1 is 0.0 when recall is 0.0, so a run that found nothing sorts last.
 
     cost_per_tp and tokens_per_tp divide by found cases: a case counts once
     however many of its ranges were hit.
@@ -127,10 +128,12 @@ def aggregate(records, window: int = DEFAULT_WINDOW,
         return precision, recall, found
 
     precision, recall, found = at(0.0)
-    if precision is None or recall is None:
+    if recall is None:
         f1 = None
+    elif not recall or not precision:
+        f1 = 0.0  # found nothing (or only misses): sorts to the bottom, not undefined
     else:
-        f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+        f1 = 2 * precision * recall / (precision + recall)
     costs = [r.cost_usd for r in records]
     cost = None if any(c is None for c in costs) else sum(costs)
     tokens = sum(r.tokens for r in records)
