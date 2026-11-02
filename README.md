@@ -12,6 +12,13 @@ Whippletree is a self-built coding-agent harness. Milestone 1 benchmarks code re
 - **H2:** cross-model review catches bugs that self-review misses.
 - **H3:** native provider adapters cut cost vs. OpenRouter (prompt caching).
 
+## Prerequisites
+
+- Python 3.13 and [uv](https://docs.astral.sh/uv/).
+- For local runs: [Ollama](https://ollama.com) running, then `ollama pull llama3.1:8b`.
+- For hosted models: an [OpenRouter](https://openrouter.ai) API key in `.env`.
+- Run from a source checkout: the seeded cases live in the repo's `datasets/` directory, not in the installed package.
+
 ## Run it
 
 ```bash
@@ -21,11 +28,38 @@ cp .env.example .env                     # add OPENROUTER_API_KEY for OpenRouter
 
 uv run whippletree run baseline --dataset seeded
 uv run whippletree run review --dataset seeded --model ollama:llama3.1:8b
-uv run whippletree run review --dataset seeded --model openrouter:google/gemini-2.5-pro --routing Google
+uv run whippletree run review --dataset seeded --model openrouter:google/gemini-2.5-pro --routing google-vertex
 uv run whippletree report <run-id> [<run-id> ...]
 ```
 
+`--routing` pins the OpenRouter backend by provider slug (OpenRouter's `provider.order` takes slugs such as `google-vertex`, not display names; copy the slug from the model's page on openrouter.ai). Fallbacks are disabled, so a request fails rather than being served by a different backend.
+
 Traces go to `runs/<run-id>.jsonl` (gitignored). Curated results go in `results/`.
+
+### Sample report
+
+The random baseline (3 guesses per case, seed 0) on the 2-case seeded set, as printed by `whippletree report`:
+
+```
+run 20261102T204724Z-f61c13  model=baseline:random  dataset=seeded  served_by=-
+  cases 2 scored + 0 errored  recall 0.50  precision 0.17  F1 0.25
+  cost $0.0000  $/found $0.0000  tokens/found 0
+  cost sources: none 2
+  tool_errors 0  parse_failures 0
+  stops: done 2
+  recall by kind: deletion 0.00, modification 1.00
+  PR curve: >=0.0 P0.17 R0.50 | >=0.5 P0.17 R0.50 | >=0.7 P- R0.00 | >=0.9 P- R0.00
+```
+
+A model has to beat this floor. Runs made from a tree with uncommitted changes get an extra `WARNING: run made from uncommitted changes (git_dirty)` line.
+
+## Tests
+
+```bash
+uv run pytest            # unit tests, no network
+uv run pytest -m live    # smoke test against a local Ollama (llama3.1:8b)
+uv run ruff check .
+```
 
 ## Design choices
 

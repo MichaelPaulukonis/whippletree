@@ -1,6 +1,35 @@
-# Project Instructions for AI Agents
+# whippletree
 
-This file provides instructions and context for AI coding agents working on this project.
+Self-built Python harness that benchmarks cross-model code review. A reviewer agent gets a PR-style diff containing one known bug, explores the repo with read-only tools (`read_file`, `list_dir`, `grep`), and submits findings. Whippletree scores them against ground truth and logs every model call to a JSONL trace. Milestone 1 runs on a hand-seeded set; BugsInPy is next.
+
+## Commands
+
+```bash
+uv sync
+uv run pytest                    # unit tests
+uv run pytest -m live            # needs local Ollama with llama3.1:8b; not run by default
+uv run ruff check .
+
+uv run whippletree run baseline --dataset seeded
+uv run whippletree run review --dataset seeded --model ollama:llama3.1:8b
+uv run whippletree run review --dataset seeded --model openrouter:google/gemini-2.5-pro --routing google-vertex
+uv run whippletree report <run-id> [<run-id> ...]
+```
+
+## Architecture
+
+providers (`providers/`, OpenRouter and Ollama via the openai SDK) -> loop (`loop.py`, role-agnostic agent loop) -> roles (`roles/reviewer.py`: prompt, tools, `submit_findings`) -> runner (`runner.py`, per-case records and cost) -> traces (`traces.py`, JSONL) and report (`cli.py`). `scoring.py` is pure: no I/O, re-scores from the trace alone. Shared types are in `case.py`; usage/setup errors raise `WhippletreeError` (`errors.py`) and the CLI prints them as one line and exits 2.
+
+## Where things are
+
+- Spec: `docs/superpowers/specs/2026-11-01-whippletree-design.md`
+- Plan: `docs/superpowers/plans/2026-11-02-whippletree-core.md`
+- Seeded cases: `datasets/seeded/`; raw traces: `runs/` (gitignored); curated results: `results/`
+
+## Conventions
+
+- Tests first; fakes live in `tests/fakes.py`.
+- One failing case must never sink a run: harness failures are recorded as errored, not as model misses.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:1105d646 -->
 ## Beads Issue Tracker
@@ -56,22 +85,3 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 - Do not commit or push without clear authority from the active profile or the current user request.
 - If a required sync or push is blocked, stop and report the exact command and error.
 <!-- END BEADS INTEGRATION -->
-
-
-## Build & Test
-
-_Add your build and test commands here_
-
-```bash
-# Example:
-# npm install
-# npm test
-```
-
-## Architecture Overview
-
-_Add a brief overview of your project architecture_
-
-## Conventions & Patterns
-
-_Add your project-specific conventions here_

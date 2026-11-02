@@ -58,8 +58,9 @@ whippletree/
     roles/
       reviewer.py        system prompt, submit_findings terminal tool + validation
     baseline.py          dumb reviewer (random changed lines in the diff) - scoring sanity check
+    case.py              Range, Padding, Case, Finding (shared domain types)
+    errors.py            WhippletreeError (usage/setup errors; the CLI prints one line, exits 2)
     datasets/
-      base.py            Case, GroundTruth
       bugsinpy.py
       seeded.py
     scoring.py
@@ -110,7 +111,7 @@ No automated matching of `claim` text against commit messages (too brittle; fix 
 
 **baseline** - `whippletree run baseline --dataset ... --strategy random` emits K findings at random changed lines of the case diff (post-image line numbers), skipping the loop and providers. Its scores set the floor every model must beat and confirm the scoring can't be gamed by guessing lines.
 
-**traces** - one JSONL file per run in `runs/<run-id>.jsonl`, created exclusively (an existing path is an error, never overwritten). First line is a header: run id, mode, model, dataset, `git_sha` and `git_dirty` (computed in the whippletree checkout, not the process cwd), `version`, `argv`, `case_filter`, `limit`, `dataset_hash` (sha256 over the loaded, filtered cases sorted by id: id, diff, ground truth), `window` and `thresholds` (scoring defaults), settings, limits, routing and repeat (review runs), `prompt_sha` (sha256 of the system prompt actually sent; review runs), and k and seed (baseline runs). served_by is recorded per call, not in the header; `report` lists the distinct values and warns when more than one backend served a run. Then one line per model call (tokens, cost, latency, stop_reason, tool calls) and one per case result; review case events include the full loop transcript so failures can be diagnosed from the trace. A run that finishes writes a final `end` event with the case count; `report` prints `WARNING: incomplete run (no end event)` when it is missing. `report` re-scores from the trace alone.
+**traces** - one JSONL file per run in `runs/<run-id>.jsonl`, created exclusively (an existing path is an error, never overwritten). First line is a header: run id, mode, model, dataset, `git_sha` and `git_dirty` (computed in the whippletree checkout, not the process cwd), `version`, `argv`, `case_filter`, `limit`, `dataset_hash` (sha256 over the loaded, filtered cases sorted by id: id, diff, ground truth), `window` and `thresholds` (scoring defaults), settings, limits, routing and repeat (review runs), `system_prompt_sha` (sha256 of the system prompt actually sent, not of the tool schemas or user message; review runs), and k and seed (baseline runs). served_by is recorded per call, not in the header; `report` lists the distinct values and warns when more than one backend served a run. Then one line per model call (tokens, cost, latency, stop_reason, tool calls) and one per case result; review case events include the full loop transcript so failures can be diagnosed from the trace. A run that finishes writes a final `end` event with the case count; `report` prints `WARNING: incomplete run (no end event)` when it is missing. `report` re-scores from the trace alone.
 
 **cli**
 
