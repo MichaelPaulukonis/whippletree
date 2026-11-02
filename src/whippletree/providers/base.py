@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from whippletree.errors import WhippletreeError
+
 
 @dataclass(frozen=True)
 class ToolCall:
@@ -53,5 +55,5 @@ def parse_model(spec: str) -> tuple[str, str]:
     """'ollama:llama3.1:8b' -> ('ollama', 'llama3.1:8b'). Splits on the first colon."""
     provider, sep, model = spec.partition(":")
     if not sep or not provider or not model:
-        raise ValueError(f"model must look like provider:model-id, got {spec!r}")
+        raise WhippletreeError(f"model must look like provider:model-id, got {spec!r}")
     return provider, model

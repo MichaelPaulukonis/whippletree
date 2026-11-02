@@ -36,6 +36,8 @@ class Padding:
 
 @dataclass(frozen=True)
 class Case:
+    """One benchmark item: a PR-style diff, the checkout it applies to, and the known bug."""
+
     id: str
     dataset: str
     checkout_path: Path
@@ -46,6 +48,8 @@ class Case:
 
 @dataclass(frozen=True)
 class Finding:
+    """One reported bug: where (head-version line), what, and how sure the model is."""
+
     file: str
     line: int
     claim: str

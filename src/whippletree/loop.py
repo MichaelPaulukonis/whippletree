@@ -13,8 +13,9 @@ from typing import Any
 from whippletree.providers.base import Provider, ProviderError, Response, TransientError
 from whippletree.tools.base import Submit, Tool, ToolError
 
-NUDGE = "You have not submitted. Call submit_findings to complete your review."
-WARNING = "Limit almost reached: call submit_findings now with what you have."
+# {tool} is filled with the terminal tool name(s) at run time; the loop knows no role's tools.
+NUDGE = "You have not submitted. Call {tool} to complete your task."
+WARNING = "Limit almost reached: call {tool} now with what you have."
 WARN_AT_BUDGET_SHARE = 0.8
 NOT_RUN = "not run: time limit reached"
 
@@ -74,7 +75,11 @@ def run(
     transcript = list(messages)
     by_name = {t.name: t for t in tools}
     schemas = [t.schema() for t in tools]
-    has_terminal = any(t.terminal for t in tools)
+    terminal_names = [t.name for t in tools if t.terminal]
+    has_terminal = bool(terminal_names)
+    names = " or ".join(terminal_names)
+    nudge = nudge.replace("{tool}", names) if nudge else nudge
+    warning = warning.replace("{tool}", names) if warning else warning
     c = Counters()
     started = clock()
     slept = [0.0]  # retry backoff is the harness's time, not the model's

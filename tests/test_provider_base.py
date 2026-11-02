@@ -1,5 +1,6 @@
 import pytest
 
+from whippletree.errors import WhippletreeError
 from whippletree.providers.base import Usage, parse_model
 
 
@@ -10,7 +11,7 @@ def test_parse_model_splits_on_first_colon():
 
 @pytest.mark.parametrize("bad", ["llama3", ":x", "ollama:"])
 def test_parse_model_rejects_bad_specs(bad):
-    with pytest.raises(ValueError):
+    with pytest.raises(WhippletreeError):
         parse_model(bad)
 
 

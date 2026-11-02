@@ -19,6 +19,8 @@ ENDPOINTS = {
 
 
 class OpenAICompatProvider:
+    """Chat-completions provider for OpenRouter and Ollama via the openai SDK."""
+
     def __init__(self, name: str, client=None, routing: list[str] | None = None):
         if name not in ENDPOINTS:
             raise ProviderError(f"unknown provider {name!r}")

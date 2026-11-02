@@ -49,3 +49,10 @@ def test_dashes_inside_hunk_are_content_not_headers():
             "@@ -1,3 +1,3 @@\n a\n--- foo\n+++ x\n c\n")
     # '--- foo' is a deletion after line 1 -> (s.sql, 1); '+++ x' is added head line 2.
     assert changed_lines(diff) == [("s.sql", 1), ("s.sql", 2)]
+
+
+def test_binary_entry_after_text_entry_adds_no_lines_to_previous_file():
+    diff = ("diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-a\n+b\n"
+            "diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n"
+            "+stray\n")
+    assert changed_lines(diff) == [("x.py", 1)]

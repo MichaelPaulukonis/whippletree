@@ -13,6 +13,7 @@ from pathlib import Path
 
 from whippletree import __version__
 from whippletree.datasets.seeded import load_seeded
+from whippletree.errors import WhippletreeError
 from whippletree.loop import Limits
 from whippletree.providers.base import ProviderError, parse_model
 from whippletree.providers.openai_compat import OpenAICompatProvider
@@ -64,9 +65,10 @@ def git_sha() -> str:
     return out.strip() if out is not None else "unknown"
 
 
-def git_dirty() -> bool:
+def git_dirty() -> bool | None:
+    """True if the checkout has uncommitted changes; None if git could not be run."""
     out = _git("status", "--porcelain")
-    return bool(out and out.strip())
+    return None if out is None else bool(out.strip())
 
 
 def dataset_hash(cases) -> str:
@@ -96,7 +98,7 @@ def load_cases(dataset: str, case_id: str | None, limit: int | None):
 def select_cases(args, case_id: str | None):
     cases = load_cases(args.dataset, case_id, args.limit)
     if not cases:
-        raise ValueError(f"no cases match dataset={args.dataset} case={case_id} "
+        raise WhippletreeError(f"no cases match dataset={args.dataset} case={case_id} "
                          f"limit={args.limit}")
     return cases
 
@@ -123,7 +125,7 @@ def cmd_review(args) -> int:
     with TraceWriter(_trace_path(args.runs_dir, run_id)) as trace:
         trace.write("header", run_id=run_id, mode="review", model=args.model,
                     limits=limits, settings=SETTINGS, routing=routing, repeat=args.repeat,
-                    prompt_sha=hashlib.sha256(build_system_prompt(limits).encode()).hexdigest(),
+                    system_prompt_sha=hashlib.sha256(build_system_prompt(limits).encode()).hexdigest(),
                     **_base_header(args, cases, args.case))
         records = run_review(cases, args.model, provider, trace, limits=limits,
                              settings=SETTINGS, repeat=args.repeat)
@@ -161,8 +163,8 @@ def format_metrics(run_id: str, header: dict, m: RunMetrics, served_by: list[str
     stops = ", ".join(f"{s} {n}" for s, n in sorted(Counter(r.stop for r in records).items()))
     n_cases = len({r.case_id for r in records})
     repeats = sorted({r.repeat for r in records})
-    cases_label = (f"cases {n_cases} x {len(repeats)} repeats (errored {m.errored})"
-                   if len(repeats) > 1 else f"cases {m.cases} (errored {m.errored})")
+    cases_label = (f"cases {n_cases} scored + {m.errored} errored x {len(repeats)} repeats"
+                   if len(repeats) > 1 else f"cases {m.cases} scored + {m.errored} errored")
     sources = ", ".join(f"{s} {n}" for s, n in
                         sorted(Counter(r.cost_source for r in records).items()))
     lines = [
@@ -185,6 +187,8 @@ def format_metrics(run_id: str, header: dict, m: RunMetrics, served_by: list[str
                      f"(spread {spread})")
     if len(served_by) > 1:
         lines.append("  WARNING: served by more than one backend; numbers mix providers")
+    if header.get("git_dirty"):
+        lines.append("  WARNING: run made from uncommitted changes (git_dirty)")
     if not complete:
         lines.append("  WARNING: incomplete run (no end event)")
     return "\n".join(lines)
@@ -192,17 +196,27 @@ def format_metrics(run_id: str, header: dict, m: RunMetrics, served_by: list[str
 
 def cmd_report(args) -> int:
     blocks = []
+    hashes = set()
     for run_id in args.run_ids:
-        events = read_trace(_trace_path(args.runs_dir, run_id))
+        try:
+            events = read_trace(_trace_path(args.runs_dir, run_id))
+        except ValueError as e:
+            raise WhippletreeError(str(e)) from e
         header = next((e for e in events if e["kind"] == "header"), None)
         if header is None:
-            raise ValueError(f"trace for run {run_id} has no header event")
+            raise WhippletreeError(f"trace for run {run_id} has no header event")
+        if header.get("dataset_hash"):
+            hashes.add(header["dataset_hash"])
         records = [CaseRecord.from_dict(e["record"]) for e in events if e["kind"] == "case"]
         served = sorted({e["served_by"] for e in events
                          if e["kind"] == "call" and e.get("served_by")})
-        blocks.append(format_metrics(run_id, header, aggregate(records), served, records,
+        metrics = aggregate(records, window=header.get("window", DEFAULT_WINDOW),
+                            thresholds=tuple(header.get("thresholds", DEFAULT_THRESHOLDS)))
+        blocks.append(format_metrics(run_id, header, metrics, served, records,
                                     complete=any(e["kind"] == "end" for e in events)))
     print("\n\n".join(blocks))
+    if len(hashes) > 1:
+        print("\nWARNING: runs used different case sets (dataset_hash differs)")
     return 0
 
 
@@ -245,6 +259,6 @@ def main(argv: list[str] | None = None) -> int:
     args.argv = list(argv) if argv is not None else sys.argv[1:]
     try:
         return args.func(args)
-    except (FileNotFoundError, ProviderError, ValueError) as e:
+    except (WhippletreeError, ProviderError, FileNotFoundError) as e:
         print(f"whippletree: {e}", file=sys.stderr)
         return 2

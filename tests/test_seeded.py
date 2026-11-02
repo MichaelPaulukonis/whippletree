@@ -1,9 +1,11 @@
 import json
+import subprocess
 
 import pytest
 
 from whippletree.case import Range
 from whippletree.datasets.seeded import SEEDED_ROOT, load_seeded, tree_diff
+from whippletree.errors import WhippletreeError
 
 
 def test_loads_both_cases_in_order():
@@ -78,5 +80,14 @@ def test_tree_diff_rewrites_rename_and_new_file_headers(tmp_path):
 def test_tree_diff_requires_sibling_trees(tmp_path):
     (tmp_path / "x" / "before").mkdir(parents=True)
     (tmp_path / "after").mkdir()
-    with pytest.raises(ValueError):
+    with pytest.raises(WhippletreeError):
         tree_diff(tmp_path / "x" / "before", tmp_path / "after")
+
+
+def test_tree_diff_git_failure_is_whippletree_error(tmp_path, monkeypatch):
+    (tmp_path / "before").mkdir()
+    (tmp_path / "after").mkdir()
+    failed = subprocess.CompletedProcess([], 128, stdout="", stderr="fatal: boom")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: failed)
+    with pytest.raises(WhippletreeError, match="git diff failed: fatal: boom"):
+        tree_diff(tmp_path / "before", tmp_path / "after")

@@ -20,6 +20,10 @@ submit = Tool("submit", "submit", OBJ, fn=_submit, terminal=True)
 MSGS = [{"role": "user", "content": "go"}]
 
 
+def _filled(template, tool="submit"):
+    return template.replace("{tool}", tool)
+
+
 def go(script, tools, limits=None, **kw):
     provider = FakeProvider(script)
     kw.setdefault("sleep", lambda s: None)
@@ -62,7 +66,23 @@ def test_no_tool_calls_nudges_once_then_no_submit():
     assert r.stop == "no_submit"
     assert r.result is None
     assert r.counters.nudges == 1
-    assert p.seen[1][-1] == {"role": "user", "content": NUDGE}
+    assert p.seen[1][-1] == {"role": "user", "content": _filled(NUDGE)}
+
+
+def test_nudge_and_warning_name_the_terminal_tools_at_run_time():
+    other = Tool("finish", "finish", OBJ, fn=_submit, terminal=True)
+    p, r = go([resp("done?"), resp("again")], [other, submit])
+    assert p.seen[1][-1]["content"] == _filled(NUDGE, "finish or submit")
+    assert "{tool}" in NUDGE and "{tool}" in WARNING
+    import inspect
+
+    import whippletree.loop as loop
+    assert "submit_findings" not in inspect.getsource(loop)
+
+
+def test_custom_nudge_is_sent_as_given():
+    p, r = go([resp("done?"), resp("x")], [submit], nudge="Please call {tool}!")
+    assert p.seen[1][-1]["content"] == "Please call submit!"
 
 
 def test_nudge_then_submit_is_done():
@@ -150,7 +170,7 @@ def test_every_tool_call_gets_a_result_even_after_submit():
 
 
 def _warnings(transcript):
-    return [m for m in transcript if m == {"role": "user", "content": WARNING}]
+    return [m for m in transcript if m == {"role": "user", "content": _filled(WARNING)}]
 
 
 def test_warning_before_last_allowed_call():
@@ -158,7 +178,7 @@ def test_warning_before_last_allowed_call():
               resp(calls=[call("submit", {"v": 1})])]
     p, r = go(script, [echo, submit], Limits(max_steps=3))
     assert (r.stop, r.result, r.counters.warnings) == ("done", 1, 1)
-    assert p.seen[2][-1] == {"role": "user", "content": WARNING}
+    assert p.seen[2][-1] == {"role": "user", "content": _filled(WARNING)}
     assert not _warnings(p.seen[1])
     assert WARNING != NUDGE
 
@@ -169,7 +189,7 @@ def test_warning_at_80_percent_of_token_budget_is_sent_once():
               resp(calls=[call("submit", {"v": 2})], inp=1, out=1)]
     p, r = go(script, [echo, submit], Limits(token_budget=100))
     assert (r.stop, r.result, r.counters.warnings) == ("done", 2, 1)
-    assert p.seen[1][-1] == {"role": "user", "content": WARNING}
+    assert p.seen[1][-1] == {"role": "user", "content": _filled(WARNING)}
     assert len(_warnings(r.transcript)) == 1
 
 

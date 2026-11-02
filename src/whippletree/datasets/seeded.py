@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 from whippletree.case import Case, Range
+from whippletree.errors import WhippletreeError
 
 SEEDED_ROOT = Path(__file__).resolve().parents[3] / "datasets" / "seeded"
 
@@ -33,7 +34,7 @@ def load_seeded(root: Path = SEEDED_ROOT) -> list[Case]:
 def tree_diff(before: Path, after: Path) -> str:
     """Unified diff of two sibling trees, with a/ and b/ paths relative to each tree."""
     if before.parent != after.parent:
-        raise ValueError(f"trees must be siblings: {before} vs {after}")
+        raise WhippletreeError(f"trees must be siblings: {before} vs {after}")
     proc = subprocess.run(
         ["git", "-c", "core.quotePath=false", "diff", "--no-index", "--no-color",
          before.name, after.name],
@@ -42,7 +43,7 @@ def tree_diff(before: Path, after: Path) -> str:
         text=True,
     )
     if proc.returncode not in (0, 1):  # 1 just means "there are differences"
-        raise RuntimeError(f"git diff failed: {proc.stderr}")
+        raise WhippletreeError(f"git diff failed: {proc.stderr.strip()}")
     return _strip_tree_names(proc.stdout, before.name, after.name)
 
 

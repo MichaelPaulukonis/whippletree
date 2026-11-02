@@ -13,10 +13,13 @@ def changed_lines(diff: str) -> list[tuple[str, int]]:
     out = set()
     file, line = None, 0
     # ---/+++ are file headers only outside a hunk (also true before any diff --git line).
+    # Written for git-style diffs: each file starts at a "diff --git" line, and a file with
+    # no +++ line (e.g. a binary entry) must not inherit the previous file's name.
     in_header = True
     for raw in diff.splitlines():
         if raw.startswith("diff --git "):
             in_header = True
+            file = None
             continue
         if in_header and raw.startswith("+++ "):
             path = raw[4:].strip()
