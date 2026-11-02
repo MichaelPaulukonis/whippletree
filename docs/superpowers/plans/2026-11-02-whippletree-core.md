@@ -516,7 +516,7 @@ git commit -m "feat: provider interface"
 ```python
 from types import SimpleNamespace
 
-import httpx
+import httpx2  # openai 3.x ships httpx2, not httpx
 import openai
 import pytest
 from openai.types.chat import ChatCompletion
@@ -624,8 +624,8 @@ def _provider(completions):
 
 
 def _status_error(cls, code):
-    request = httpx.Request("POST", "https://example.test")
-    return cls("boom", response=httpx.Response(code, request=request), body=None)
+    request = httpx2.Request("POST", "https://example.test")
+    return cls("boom", response=httpx2.Response(code, request=request), body=None)
 
 
 @pytest.mark.parametrize(
@@ -633,7 +633,7 @@ def _status_error(cls, code):
     [
         _status_error(openai.RateLimitError, 429),
         _status_error(openai.InternalServerError, 500),
-        openai.APIConnectionError(request=httpx.Request("POST", "https://example.test")),
+        openai.APIConnectionError(request=httpx2.Request("POST", "https://example.test")),
     ],
 )
 def test_retryable_failures_are_transient(exc):
