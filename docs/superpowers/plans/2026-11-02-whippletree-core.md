@@ -2587,6 +2587,9 @@ from whippletree.roles.reviewer import review
 from whippletree.scoring import CaseRecord
 from whippletree.traces import TraceWriter
 
+# Harness/provider failures, not model misses: excluded from precision and recall.
+ERRORED_STOPS = ("error", "timeout")
+
 
 def cost_for(model_spec: str, c: Counters) -> tuple[float | None, str]:
     if c.steps == 0:
@@ -2628,7 +2631,7 @@ def run_review(
                 cost_source=source,
                 tool_errors=c.tool_errors,
                 parse_failures=result.parse_failures,
-                errored=result.loop.stop == "error",
+                errored=result.loop.stop in ERRORED_STOPS,
             )
             trace.write("case", record=record, counters=c, padding=case.padding,
                         error=result.loop.error)
@@ -2702,6 +2705,7 @@ def test_baseline_then_report(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "model=baseline:random" in out
     assert "cases 2 (errored 0)" in out
+    assert "stops: done 2" in out
 
 
 def test_review_then_report(tmp_path, capsys, monkeypatch):
@@ -2755,6 +2759,7 @@ import argparse
 import os
 import random
 import subprocess
+from collections import Counter
 from pathlib import Path
 
 from whippletree.datasets.seeded import load_seeded
@@ -2837,27 +2842,35 @@ def _money(x: float | None) -> str:
     return "n/a" if x is None else f"${x:.4f}"
 
 
+def _num(x: float | None) -> str:
+    """Undefined metrics (None) render as '-'."""
+    return "-" if x is None else f"{x:.2f}"
+
+
 def format_metrics(run_id: str, header: dict, m: RunMetrics, served_by: list[str],
                    records: list[CaseRecord]) -> str:
     tokens = "n/a" if m.tokens_per_tp is None else f"{m.tokens_per_tp:.0f}"
     kinds = ", ".join(f"{k} {v:.2f}" for k, v in sorted(m.recall_by_kind.items())) or "-"
-    curve = " | ".join(f">={t:.1f} P{p:.2f} R{r:.2f}" for t, p, r in m.pr_curve)
+    curve = " | ".join(f">={t:.1f} P{_num(p)} R{_num(r)}" for t, p, r in m.pr_curve)
+    stops = ", ".join(f"{s} {n}" for s, n in sorted(Counter(r.stop for r in records).items()))
     lines = [
         f"run {run_id}  model={header['model']}  dataset={header['dataset']}  "
         f"served_by={','.join(served_by) or '-'}",
-        f"  cases {m.cases} (errored {m.errored})  recall {m.recall:.2f}  "
-        f"precision {m.precision:.2f}  F1 {m.f1:.2f}",
-        f"  cost {_money(m.cost_usd)}  $/TP {_money(m.cost_per_tp)}  tokens/TP {tokens}",
+        f"  cases {m.cases} (errored {m.errored})  recall {_num(m.recall)}  "
+        f"precision {_num(m.precision)}  F1 {_num(m.f1)}",
+        f"  cost {_money(m.cost_usd)}  $/found {_money(m.cost_per_tp)}  tokens/found {tokens}",
         f"  tool_errors {m.tool_errors}  parse_failures {m.parse_failures}",
+        f"  stops: {stops or '-'}",
         f"  recall by kind: {kinds}",
         f"  PR curve: {curve}",
     ]
     repeats = sorted({r.repeat for r in records})
     if len(repeats) > 1:
         per = [aggregate([r for r in records if r.repeat == k]).recall for k in repeats]
-        spread = max(per) - min(per)
-        lines.append(f"  recall per repeat: {', '.join(f'{x:.2f}' for x in per)} "
-                     f"(spread {spread:.2f})")
+        defined = [x for x in per if x is not None]
+        spread = _num(max(defined) - min(defined)) if defined else "-"
+        lines.append(f"  recall per repeat: {', '.join(_num(x) for x in per)} "
+                     f"(spread {spread})")
     if len(served_by) > 1:
         lines.append("  WARNING: served by more than one backend; numbers mix providers")
     return "\n".join(lines)
