@@ -2,7 +2,13 @@ import pytest
 
 from tests.fakes import FakeProvider, call, resp
 from whippletree.case import Case, Finding
-from whippletree.roles.reviewer import make_submit_tool, review, validate_findings
+from whippletree.loop import Limits
+from whippletree.roles.reviewer import (
+    build_user_message,
+    make_submit_tool,
+    review,
+    validate_findings,
+)
 from whippletree.tools.base import Submit, ToolError
 
 GOOD = {"file": "a.py", "line": 3, "claim": "off by one", "confidence": 0.9}
@@ -14,6 +20,11 @@ def test_valid_findings():
 
 def test_empty_list_is_valid():
     assert validate_findings({"findings": []}) == []
+
+
+def test_integral_float_line_is_accepted_as_int():
+    line = validate_findings({"findings": [{**GOOD, "line": 12.0}]})[0].line
+    assert line == 12 and type(line) is int
 
 
 def test_integer_confidence_is_accepted_as_float():
@@ -31,6 +42,9 @@ def test_integer_confidence_is_accepted_as_float():
         ({"findings": [{**GOOD, "line": True}]}, "'line'"),
         ({"findings": [{**GOOD, "line": 0}]}, "'line'"),
         ({"findings": [{**GOOD, "line": "3"}]}, "'line'"),
+        ({"findings": [{**GOOD, "line": 12.5}]}, "'line'"),
+        ({"findings": [{**GOOD, "line": 0.0}]}, "'line'"),
+        ({"findings": [{**GOOD, "line": float("inf")}]}, "'line'"),
         ({"findings": [{**GOOD, "claim": ""}]}, "'claim'"),
         ({"findings": [{**GOOD, "confidence": 1.5}]}, "'confidence'"),
         ({"findings": [{**GOOD, "confidence": "high"}]}, "'confidence'"),
@@ -73,3 +87,23 @@ def test_review_without_submission_scores_no_findings(case):
     result = review(case, FakeProvider([resp("looks fine"), resp("still fine")]), "m")
     assert result.loop.stop == "no_submit"
     assert result.findings == []
+
+
+def test_system_prompt_states_the_step_limit(case):
+    provider = FakeProvider([resp(calls=[call("submit_findings", {"findings": []})])])
+    review(case, provider, "m", limits=Limits(max_steps=7))
+    assert "at most 7 model turns" in provider.seen[0][0]["content"]
+
+
+def test_system_prompt_uses_default_limits(case):
+    provider = FakeProvider([resp(calls=[call("submit_findings", {"findings": []})])])
+    review(case, provider, "m")
+    assert f"at most {Limits().max_steps} model turns" in provider.seen[0][0]["content"]
+
+
+def test_diff_fence_is_longer_than_any_backtick_run_in_it(case):
+    diff = "+```\n+y = '````'"
+    msg = build_user_message(Case(id="t", dataset="t", checkout_path=case.checkout_path,
+                                  diff=diff, ground_truth=()))
+    assert msg.endswith(f"`````diff\n{diff}\n`````")
+    assert build_user_message(case).endswith("```diff\n+x = 1\n```")

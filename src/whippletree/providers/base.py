@@ -31,6 +31,7 @@ class Response:
     stop_reason: str
     cost_usd: float | None = None
     served_by: str | None = None
+    extra: dict = field(default_factory=dict)  # provider fields to echo back on the next turn
     raw: Any = field(default=None, repr=False)
 
 

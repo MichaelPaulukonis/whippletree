@@ -5,6 +5,7 @@ count them.
 """
 
 import os
+import uuid
 
 import openai
 
@@ -90,14 +91,17 @@ def parse_response(raw) -> Response:
         _raise_upstream_error(raw, choice)
     msg = choice.message
     calls = []
-    for i, c in enumerate(msg.tool_calls or []):
+    for c in msg.tool_calls or []:
         kind = getattr(c, "type", None)
         if getattr(c, "function", None) is None or kind not in (None, "function"):
             raise ProviderError(f"unsupported tool call type {kind!r}")
         calls.append(
-            ToolCall(id=c.id or f"call_{i}", name=c.function.name,
+            ToolCall(id=c.id or f"call_{uuid.uuid4().hex[:12]}", name=c.function.name,
                      arguments=c.function.arguments or "{}")
         )
+    # Reasoning must be echoed back in tool loops (Gemini thought signatures, Anthropic thinking).
+    msg_extra = msg.model_extra or {}
+    extra = {k: msg_extra[k] for k in ("reasoning", "reasoning_details") if msg_extra.get(k)}
     u = raw.usage
     usage = Usage()
     cost = None
@@ -113,5 +117,6 @@ def parse_response(raw) -> Response:
         stop_reason=choice.finish_reason or "unknown",
         cost_usd=cost,
         served_by=(raw.model_extra or {}).get("provider"),  # OpenRouter: which backend served it
+        extra=extra,
         raw=raw,
     )

@@ -193,13 +193,31 @@ def test_tool_call_of_other_type_is_surfaced():
         parse_response(raw)
 
 
-def test_empty_tool_call_ids_get_index_fallback():
+def test_empty_tool_call_ids_get_unique_fallback():
     raw = ChatCompletion.model_validate(TOOL_CALL_RESPONSE)
     first = raw.choices[0].message.tool_calls[0]
     calls = [first.model_copy(update={"id": i}) for i in (None, "", "real")]
     raw.choices[0].message.tool_calls = calls
-    r = parse_response(raw)
-    assert [c.id for c in r.tool_calls] == ["call_0", "call_1", "real"]
+    ids = [c.id for c in parse_response(raw).tool_calls]
+    again = [c.id for c in parse_response(raw).tool_calls]
+    assert ids[2] == "real"
+    assert all(i.startswith("call_") for i in ids[:2] + again[:2])
+    assert len(set(ids[:2] + again[:2])) == 4  # unique within and across turns
+
+
+def test_reasoning_fields_are_kept_for_echoing_back():
+    details = [{"type": "reasoning.encrypted", "data": "sig", "format": "google-gemini-v1"}]
+    payload = {**TOOL_CALL_RESPONSE, "choices": [{
+        **TOOL_CALL_RESPONSE["choices"][0],
+        "message": {**TOOL_CALL_RESPONSE["choices"][0]["message"], "reasoning": "hmm",
+                    "reasoning_details": details},
+    }]}
+    r = parse_response(ChatCompletion.model_validate(payload))
+    assert r.extra == {"reasoning": "hmm", "reasoning_details": details}
+
+
+def test_no_reasoning_fields_means_empty_extra():
+    assert parse_response(ChatCompletion.model_validate(TEXT_RESPONSE)).extra == {}
 
 
 @pytest.mark.parametrize("code", [408, 409])

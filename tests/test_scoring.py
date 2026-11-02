@@ -84,7 +84,47 @@ def test_unknown_cost_makes_run_cost_unknown():
 
 def test_nothing_found_gives_no_per_tp_numbers():
     m = aggregate([rec([], MOD)])
-    assert m.cost_per_tp is None and m.tokens_per_tp is None and m.f1 == 0.0
+    assert m.cost_per_tp is None and m.tokens_per_tp is None
+
+
+def test_zero_findings_means_precision_undefined_not_zero():
+    m = aggregate([rec([], MOD)])
+    assert (m.precision, m.recall, m.f1) == (None, 0.0, None)
+    assert m.pr_curve[0] == (0.0, None, 0.0)
+
+
+def test_only_wrong_findings_is_zero_not_undefined():
+    m = aggregate([rec([f(90)], MOD)])
+    assert (m.precision, m.recall, m.f1) == (0.0, 0.0, 0.0)
+
+
+def test_empty_run_has_undefined_metrics():
+    m = aggregate([])
+    assert (m.cases, m.errored, m.precision, m.recall, m.f1) == (0, 0, None, None, None)
+    assert all(p is None and r is None for _, p, r in m.pr_curve)
+
+
+def test_all_errored_run_has_undefined_metrics():
+    m = aggregate([rec([f(21)], MOD, errored=True)])
+    assert (m.cases, m.errored) == (0, 1)
+    assert (m.precision, m.recall, m.f1) == (None, None, None)
+    assert m.tokens_per_tp is None
+
+
+def test_threshold_that_drops_all_findings_gives_undefined_precision():
+    m = aggregate([rec([f(21, conf=0.3)], MOD)])
+    assert m.pr_curve[1] == (0.5, None, 0.0)
+
+
+def test_finding_prefers_an_unhit_range_over_a_dupe():
+    truth = (Range("a.py", 20, 20), Range("a.py", 25, 25))
+    s = score([f(22), f(23)], truth)
+    assert (s.tp, s.dupes, s.fp) == (2, 0, 0)
+
+
+@pytest.mark.parametrize("name", [" a.py", "a.py\n", "/a.py", " /a.py "])
+def test_found_path_whitespace_and_leading_slash_are_ignored(name):
+    assert score([f(21, file=name)], MOD).tp == 1
 
 
 def test_case_record_round_trips_through_dict():

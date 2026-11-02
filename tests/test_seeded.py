@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from whippletree.case import Range
 from whippletree.datasets.seeded import SEEDED_ROOT, load_seeded, tree_diff
 
@@ -46,3 +48,35 @@ def test_tree_diff_identical_trees_is_empty(tmp_path):
         (tmp_path / side).mkdir()
         (tmp_path / side / "x.py").write_text("same\n")
     assert tree_diff(tmp_path / "before", tmp_path / "after") == ""
+
+
+def test_tree_diff_leaves_content_paths_alone(tmp_path):
+    (tmp_path / "before").mkdir()
+    (tmp_path / "after").mkdir()
+    (tmp_path / "before" / "x.py").write_text("p = 'data/before/x'\n-- a/before/q\n")
+    (tmp_path / "after" / "x.py").write_text("p = 'a/before/y'\nq = 'b/after/z'\n")
+    diff = tree_diff(tmp_path / "before", tmp_path / "after")
+    assert "--- a/x.py\n+++ b/x.py" in diff
+    assert "-p = 'data/before/x'\n" in diff
+    assert "\n--- a/before/q\n" in diff  # removed line that looks like a header
+    assert "+p = 'a/before/y'\n+q = 'b/after/z'\n" in diff
+
+
+def test_tree_diff_rewrites_rename_and_new_file_headers(tmp_path):
+    (tmp_path / "before").mkdir()
+    (tmp_path / "after").mkdir()
+    (tmp_path / "before" / "old name.py").write_text("same\n" * 5)
+    (tmp_path / "after" / "new name.py").write_text("same\n" * 5)
+    (tmp_path / "after" / "é.py").write_text("x\n")
+    diff = tree_diff(tmp_path / "before", tmp_path / "after")
+    assert "before/" not in diff and "after/" not in diff
+    assert "rename from old name.py" in diff
+    assert "rename to new name.py" in diff
+    assert "+++ b/é.py" in diff
+
+
+def test_tree_diff_requires_sibling_trees(tmp_path):
+    (tmp_path / "x" / "before").mkdir(parents=True)
+    (tmp_path / "after").mkdir()
+    with pytest.raises(ValueError):
+        tree_diff(tmp_path / "x" / "before", tmp_path / "after")

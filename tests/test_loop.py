@@ -1,7 +1,7 @@
 import itertools
 
 from tests.fakes import FakeProvider, call, resp
-from whippletree.loop import NUDGE, Limits, run
+from whippletree.loop import NUDGE, WARNING, Limits, run
 from whippletree.providers.base import ProviderError, ToolCall, TransientError
 from whippletree.tools.base import Submit, Tool, ToolError
 
@@ -147,3 +147,121 @@ def test_every_tool_call_gets_a_result_even_after_submit():
     _, r = go([both], [echo, submit])
     assert r.stop == "done"
     assert [m["tool_call_id"] for m in r.transcript if m["role"] == "tool"] == ["a", "b"]
+
+
+def _warnings(transcript):
+    return [m for m in transcript if m == {"role": "user", "content": WARNING}]
+
+
+def test_warning_before_last_allowed_call():
+    script = [resp(calls=[call("echo", {})]), resp(calls=[call("echo", {})]),
+              resp(calls=[call("submit", {"v": 1})])]
+    p, r = go(script, [echo, submit], Limits(max_steps=3))
+    assert (r.stop, r.result, r.counters.warnings) == ("done", 1, 1)
+    assert p.seen[2][-1] == {"role": "user", "content": WARNING}
+    assert not _warnings(p.seen[1])
+    assert WARNING != NUDGE
+
+
+def test_warning_at_80_percent_of_token_budget_is_sent_once():
+    script = [resp(calls=[call("echo", {})], inp=75, out=5),  # 80 of 100
+              resp(calls=[call("echo", {})], inp=1, out=1),
+              resp(calls=[call("submit", {"v": 2})], inp=1, out=1)]
+    p, r = go(script, [echo, submit], Limits(token_budget=100))
+    assert (r.stop, r.result, r.counters.warnings) == ("done", 2, 1)
+    assert p.seen[1][-1] == {"role": "user", "content": WARNING}
+    assert len(_warnings(r.transcript)) == 1
+
+
+def test_no_warning_without_terminal_tool():
+    _, r = go([resp(calls=[call("echo", {})]), resp("hi")], [echo], Limits(max_steps=2))
+    assert (r.stop, r.counters.warnings) == ("done", 0)
+    assert not _warnings(r.transcript)
+
+
+class Clock:
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        return self.t
+
+    def sleep(self, s):
+        self.t += s
+
+
+class SlowProvider(FakeProvider):
+    def __init__(self, script, clock, seconds):
+        super().__init__(script)
+        self.clock, self.seconds = clock, seconds
+
+    def complete(self, *a):
+        self.clock.t += self.seconds
+        return super().complete(*a)
+
+
+def test_retry_backoff_does_not_count_toward_wall_clock():
+    clock = Clock()
+    script = [TransientError("x")] * 3 + [resp(calls=[call("echo", {})]),
+                                          resp(calls=[call("submit", {"v": 1})])]
+    _, r = go(script, [echo, submit], Limits(wall_clock_s=5), clock=clock, sleep=clock.sleep)
+    assert clock.t == 7  # slept 1 + 2 + 4
+    assert (r.stop, r.result) == ("done", 1)
+
+
+def slow_run(script, tools, seconds=400, limit=300):
+    clock = Clock()
+    p = SlowProvider(script, clock, seconds)
+    return run(p, "m", MSGS, tools, limits=Limits(wall_clock_s=limit), clock=clock,
+               sleep=clock.sleep)
+
+
+def test_slow_call_past_the_limit_stops_without_dispatching():
+    r = slow_run([resp(calls=[call("echo", {})])], [echo, submit])
+    assert (r.stop, r.counters.steps, r.counters.tool_calls) == ("timeout", 1, 0)
+
+
+def test_slow_call_past_the_limit_keeps_its_submission():
+    r = slow_run([resp(calls=[call("echo", {}, id="a"), call("submit", {"v": 3}, id="b")])],
+                 [echo, submit])
+    assert (r.stop, r.result) == ("done", 3)
+
+
+def test_slow_text_reply_past_the_limit_is_timeout_not_nudge():
+    r = slow_run([resp("thinking")], [echo, submit])
+    assert (r.stop, r.counters.nudges) == ("timeout", 0)
+
+
+def test_slow_text_reply_without_terminal_tool_is_still_done():
+    r = slow_run([resp("hi")], [echo])
+    assert (r.stop, r.result) == ("done", "hi")
+
+
+def test_length_stop_is_counted_and_explained_on_bad_json():
+    cut = resp(calls=[ToolCall("c1", "submit", '{"v": [1, 2')], stop="length")
+    p, r = go([cut, resp("oops", stop="length"), resp(calls=[call("submit", {"v": 1})])],
+              [submit])
+    assert r.counters.truncated_outputs == 2
+    assert "cut off by the model's max output length" in p.seen[1][-1]["content"]
+
+
+def test_bad_json_without_length_stop_does_not_blame_output_length():
+    p, _ = go([resp(calls=[ToolCall("c1", "submit", "{bad")]),
+               resp(calls=[call("submit", {"v": 1})])], [submit])
+    assert "max output length" not in p.seen[1][-1]["content"]
+
+
+def test_reasoning_extras_are_echoed_on_assistant_messages():
+    details = [{"type": "reasoning.encrypted", "data": "sig"}]
+    script = [resp(calls=[call("echo", {})], extra={"reasoning_details": details}),
+              resp(calls=[call("submit", {"v": 1})])]
+    p, _ = go(script, [echo, submit])
+    assistant = next(m for m in p.seen[1] if m["role"] == "assistant")
+    assert assistant["reasoning_details"] == details
+    assert assistant["tool_calls"][0]["id"] == "c1"
+
+
+def test_warning_can_be_disabled():
+    script = [resp(calls=[call("echo", {})]), resp(calls=[call("submit", {"v": 1})])]
+    _, r = go(script, [echo, submit], Limits(max_steps=2), warning=None)
+    assert (r.stop, r.counters.warnings) == ("done", 0)

@@ -14,6 +14,8 @@ from whippletree.providers.base import Provider, ProviderError, Response, Transi
 from whippletree.tools.base import Submit, Tool, ToolError
 
 NUDGE = "You have not submitted. Call submit_findings to complete your review."
+WARNING = "Limit almost reached: call submit_findings now with what you have."
+WARN_AT_BUDGET_SHARE = 0.8
 
 _NOTHING = object()
 
@@ -36,6 +38,8 @@ class Counters:
     retries: int = 0
     truncated_bytes: int = 0
     nudges: int = 0
+    warnings: int = 0
+    truncated_outputs: int = 0  # responses cut off by the model's max output length
     input_tokens: int = 0
     output_tokens: int = 0
     cached_tokens: int = 0
@@ -60,6 +64,7 @@ def run(
     limits: Limits | None = None,
     settings: dict | None = None,
     nudge: str | None = NUDGE,
+    warning: str | None = WARNING,
     on_call: Callable[[dict], None] | None = None,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
@@ -71,6 +76,14 @@ def run(
     has_terminal = any(t.terminal for t in tools)
     c = Counters()
     started = clock()
+    slept = [0.0]  # retry backoff is the harness's time, not the model's
+
+    def timed_sleep(seconds):
+        slept[0] += seconds
+        sleep(seconds)
+
+    def elapsed(now):
+        return now - started - slept[0]
 
     def finish(stop, result=None, error=None):
         return LoopResult(result, transcript, stop, c, error)
@@ -78,16 +91,24 @@ def run(
     while True:
         if c.steps >= limits.max_steps:
             return finish("max_steps")
-        if clock() - started > limits.wall_clock_s:
+        if elapsed(clock()) > limits.wall_clock_s:
             return finish("timeout")
+        tokens = c.input_tokens + c.output_tokens
+        if warning and has_terminal and c.warnings < 1 and (
+            c.steps == limits.max_steps - 1
+            or tokens >= WARN_AT_BUDGET_SHARE * limits.token_budget
+        ):
+            c.warnings += 1
+            transcript.append({"role": "user", "content": warning})
 
         t0 = clock()
         try:
             resp = _call_with_retry(provider, transcript, schemas, model, settings or {}, limits,
-                                    c, sleep)
+                                    c, timed_sleep)
         except ProviderError as e:
             return finish("error", error=str(e))
-        latency = clock() - t0
+        now = clock()
+        latency = now - t0
         _account(c, resp)
         if on_call:
             on_call({
@@ -101,23 +122,33 @@ def run(
             })
         transcript.append(_assistant_message(resp))
         over_budget = c.input_tokens + c.output_tokens > limits.token_budget
+        out_of_time = elapsed(now) > limits.wall_clock_s
+        cut_off = resp.stop_reason == "length"
 
         if not resp.tool_calls:
             if not has_terminal:
                 return finish("done", result=resp.text)
             if over_budget:
                 return finish("budget")
+            if out_of_time:
+                return finish("timeout")
             if nudge and c.nudges < 1:
                 c.nudges += 1
                 transcript.append({"role": "user", "content": nudge})
                 continue
             return finish("no_submit")
 
+        # Out of time: only a response that tries to submit is worth dispatching.
+        if out_of_time and not any(
+            tc.name in by_name and by_name[tc.name].terminal for tc in resp.tool_calls
+        ):
+            return finish("timeout")
+
         # Every tool call must get a result message, even after a successful submit.
         submitted = _NOTHING
         for tc in resp.tool_calls:
             c.tool_calls += 1
-            output, value = _dispatch(by_name, tc, c)
+            output, value = _dispatch(by_name, tc, c, cut_off)
             transcript.append(
                 {"role": "tool", "tool_call_id": tc.id, "content": _truncate(output, limits, c)}
             )
@@ -127,6 +158,8 @@ def run(
             return finish("done", result=submitted)
         if over_budget:
             return finish("budget")
+        if out_of_time:
+            return finish("timeout")
 
 
 def _call_with_retry(provider, transcript, schemas, model, settings, limits, c, sleep) -> Response:
@@ -143,6 +176,8 @@ def _call_with_retry(provider, transcript, schemas, model, settings, limits, c, 
 
 def _account(c: Counters, resp: Response) -> None:
     c.steps += 1
+    if resp.stop_reason == "length":
+        c.truncated_outputs += 1
     c.input_tokens += resp.usage.input
     c.output_tokens += resp.usage.output
     c.cached_tokens += resp.usage.cached
@@ -152,9 +187,11 @@ def _account(c: Counters, resp: Response) -> None:
 
 
 def _assistant_message(resp: Response) -> dict:
+    """Provider extras (e.g. reasoning_details) ride along; some backends require them back."""
     if not resp.tool_calls:
-        return {"role": "assistant", "content": resp.text}
+        return {**resp.extra, "role": "assistant", "content": resp.text}
     return {
+        **resp.extra,
         "role": "assistant",
         "content": resp.text or None,
         "tool_calls": [
@@ -165,7 +202,7 @@ def _assistant_message(resp: Response) -> dict:
     }
 
 
-def _dispatch(by_name: dict, tc, c: Counters):
+def _dispatch(by_name: dict, tc, c: Counters, cut_off: bool = False):
     tool = by_name.get(tc.name)
     try:
         if tool is None:
@@ -173,7 +210,8 @@ def _dispatch(by_name: dict, tc, c: Counters):
         try:
             args = json.loads(tc.arguments or "{}")
         except json.JSONDecodeError as e:
-            raise ToolError(f"arguments are not valid JSON: {e}") from e
+            why = " (your output was cut off by the model's max output length)" if cut_off else ""
+            raise ToolError(f"arguments are not valid JSON{why}: {e}") from e
         if not isinstance(args, dict):
             raise ToolError("arguments must be a JSON object")
         out = tool.fn(args)

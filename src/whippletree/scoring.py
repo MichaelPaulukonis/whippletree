@@ -1,4 +1,8 @@
-"""Score findings against ground truth. Pure functions, no I/O."""
+"""Score findings against ground truth. Pure functions, no I/O.
+
+Errored cases (record.errored, set by the runner) are excluded from precision and
+recall but still counted in cost and tokens. A metric with no data is None, not 0.0.
+"""
 
 from collections import defaultdict
 from dataclasses import dataclass
@@ -23,7 +27,7 @@ class CaseScore:
 
 
 def same_file(found: str, truth: str) -> bool:
-    name = found.removeprefix("./")
+    name = found.strip().removeprefix("./").removeprefix("/")
     return name in (truth, f"a/{truth}", f"b/{truth}")
 
 
@@ -31,11 +35,10 @@ def score(findings, truth: tuple[Range, ...], window: int = DEFAULT_WINDOW) -> C
     hit = [False] * len(truth)
     tp = fp = dupes = 0
     for finding in findings:
-        idx = next(
-            (i for i, r in enumerate(truth)
-             if same_file(finding.file, r.file) and r.start - window <= finding.line <= r.end + window),
-            None,
-        )
+        near = [i for i, r in enumerate(truth)
+                if same_file(finding.file, r.file) and r.start - window <= finding.line <= r.end + window]
+        # Prefer a range not yet hit, so two close bugs both count.
+        idx = next((i for i in near if not hit[i]), near[0] if near else None)
         if idx is None:
             fp += 1
         elif hit[idx]:
@@ -81,18 +84,24 @@ class CaseRecord:
 
 @dataclass(frozen=True)
 class RunMetrics:
+    """None means undefined (no findings, or no non-errored cases), not zero.
+
+    cost_per_tp and tokens_per_tp divide by found cases: a case counts once
+    however many of its ranges were hit.
+    """
+
     cases: int
     errored: int
-    recall: float  # share of cases whose bug was found
-    precision: float  # share of findings that hit a bug (dupes count as hits)
-    f1: float
+    recall: float | None  # share of cases whose bug was found
+    precision: float | None  # share of findings that hit a bug (dupes count as hits)
+    f1: float | None
     cost_usd: float | None
-    cost_per_tp: float | None
-    tokens_per_tp: float | None
+    cost_per_tp: float | None  # per found case
+    tokens_per_tp: float | None  # per found case
     tool_errors: int
     parse_failures: int
     recall_by_kind: dict[str, float]
-    pr_curve: list[tuple[float, float, float]]  # (threshold, precision, recall)
+    pr_curve: list[tuple[float, float | None, float | None]]  # (threshold, precision, recall)
 
 
 def case_kind(truth: tuple[Range, ...]) -> str:
@@ -106,19 +115,22 @@ def aggregate(records, window: int = DEFAULT_WINDOW,
               thresholds=DEFAULT_THRESHOLDS) -> RunMetrics:
     ok = [r for r in records if not r.errored]
 
-    def at(threshold: float) -> tuple[float, float, int]:
+    def at(threshold: float) -> tuple[float | None, float | None, int]:
         hits = fps = found = 0
         for r in ok:
             s = score([x for x in r.findings if x.confidence >= threshold], r.truth, window)
             hits += s.tp + s.dupes
             fps += s.fp
             found += s.found
-        precision = hits / (hits + fps) if hits + fps else 0.0
-        recall = found / len(ok) if ok else 0.0
+        precision = hits / (hits + fps) if hits + fps else None
+        recall = found / len(ok) if ok else None
         return precision, recall, found
 
     precision, recall, found = at(0.0)
-    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    if precision is None or recall is None:
+        f1 = None
+    else:
+        f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
     costs = [r.cost_usd for r in records]
     cost = None if any(c is None for c in costs) else sum(costs)
     tokens = sum(r.tokens for r in records)

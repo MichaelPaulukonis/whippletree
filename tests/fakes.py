@@ -20,14 +20,15 @@ class FakeProvider:
         return item
 
 
-def resp(text="", calls=(), inp=10, out=5, cost=None, served_by=None):
+def resp(text="", calls=(), inp=10, out=5, cost=None, served_by=None, stop=None, extra=None):
     return Response(
         text=text,
         tool_calls=list(calls),
         usage=Usage(input=inp, output=out),
-        stop_reason="tool_calls" if calls else "stop",
+        stop_reason=stop or ("tool_calls" if calls else "stop"),
         cost_usd=cost,
         served_by=served_by,
+        extra=extra or {},
     )
 
 

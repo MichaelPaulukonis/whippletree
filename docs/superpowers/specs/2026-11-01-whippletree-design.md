@@ -77,18 +77,19 @@ whippletree/
 **providers** - `complete(messages, tools, model, settings) -> Response`.
 `Response = {text, tool_calls: list[ToolCall], usage: Usage{input, output, cached}, cost_usd | None, stop_reason, served_by | None, raw}`.
 Knows nothing about the loop or datasets. Model strings are `provider:model-id` (e.g. `openrouter:google/gemini-2.5-pro`, `ollama:llama3.1:8b`).
-OpenRouter requests pin routing: `provider: {order: [...], allow_fallbacks: false}` when a backend is configured, and request usage accounting so `cost_usd` is populated.
+OpenRouter requests pin routing: `provider: {order: [...], allow_fallbacks: false}` when a backend is configured, and request usage accounting so `cost_usd` is populated. Assistant-message `reasoning` / `reasoning_details` are echoed back on later turns (Gemini thought signatures and Anthropic thinking blocks require it in tool loops).
 
 **loop** - `run(provider, model, system, messages, tools, limits) -> LoopResult{result, transcript, stop, counters}`.
 Repeats: call model -> if tool calls, dispatch each, append results -> continue.
 A tool may be marked **terminal**: when it returns successfully, the loop stops with `stop=done` and its return value becomes `LoopResult.result`. A terminal tool that fails validation returns an ordinary error string, so the model gets another turn inside the same step and token limits.
 Stops on: terminal tool succeeded (`stop=done`), a turn with no tool calls after one nudge (`stop=no_submit`), `max_steps` (`stop=max_steps`), `token_budget` exceeded (`stop=budget`), wall-clock (`stop=timeout`), or provider failure after retries (`stop=error`).
-Counters: steps, tool_calls, tool_errors, retries, truncated_bytes, nudges.
+Counters: steps, tool_calls, tool_errors, retries, truncated_bytes, nudges, warnings, truncated_outputs.
+The model is told the step limit up front and gets one last-chance warning ("call `submit_findings` now") before its final allowed turn or once token use reaches 80% of the budget. Wall clock excludes retry backoff and is also checked after each call; a submission in the response that crossed the limit is still kept. Responses cut off by the model's max output length (`stop_reason=length`) are counted in `truncated_outputs`, and a resulting bad-JSON tool error says the output was cut off.
 The loop is flat and single-agent. It knows nothing about roles, datasets, or where tools execute.
 
 **tools** - plain functions with a JSON schema each, built per case from a `ToolEnv`. In 1a, `ToolEnv` holds `checkout_path`; in 1b it also holds the Docker sandbox handle, so the loop never changes between local and container execution. All paths resolve inside the checkout; anything escaping it is a tool error. Output truncated at `max_tool_output_bytes` (default 20 KB) with a `[truncated N bytes]` marker.
 
-**roles/reviewer** - builds the system prompt and user message: the case's PR-style diff plus a short instruction to review it for bugs, using the tools to read surrounding code as needed. Provides the terminal tool `submit_findings(findings: list[Finding])`, where `Finding = {file, line, claim, confidence: 0..1}`. Validation checks the schema, types, and confidence range; it does not check that the file or line exists (that would leak hints). Validation failures count as `parse_failures` as well as `tool_errors`. If the loop ends with `stop=no_submit`, the case scores zero findings.
+**roles/reviewer** - builds the system prompt and user message: the case's PR-style diff plus a short instruction to review it for bugs, using the tools to read surrounding code as needed. Provides the terminal tool `submit_findings(findings: list[Finding])`, where `Finding = {file, line, claim, confidence: 0..1}`. Validation checks the schema, types, and confidence range; it does not check that the file or line exists (that would leak hints). Validation failures count as `parse_failures` as well as `tool_errors`. The system prompt states the step limit (filled from the `Limits` in use). If the loop ends with `stop=no_submit`, the case scores zero findings.
 
 **datasets** - `Case = {id, dataset, checkout_path, diff, padding: {base, commits, changed_lines}, ground_truth: list[{file, start, end}]}`.
 
@@ -100,11 +101,11 @@ The loop is flat and single-agent. It knows nothing about roles, datasets, or wh
   - A fix hunk that only adds lines (e.g. a missing guard clause) has no lines in `B`, so it becomes a zero-width range at the insertion point (`start = end =` the line before the insertion).
   - Skipped cases are counted and reported, with the reason. The `padding` record (base, commits, changed lines) goes into the trace so every diff can be rebuilt.
   - Repos are cloned to `~/.cache/whippletree/bugsinpy/`.
-- Seeded: same shape, stored under `datasets/seeded/<case-id>/` with `diff.patch` (hand-written, multi-hunk, one planted bug), `truth.json`, and a small source tree.
+- Seeded: same shape, stored under `datasets/seeded/<case-id>/` as two small source trees, `before/` and `after/` (one planted bug in `after/`), plus `truth.json`. The diff is generated from the two trees (`git diff --no-index`, with tree names stripped from header paths only), not hand-written; the checkout is `after/`.
 
 **scoring** - pure function `score(findings, ground_truth, line_window=5) -> CaseScore`.
 A finding hits a ground-truth range if the file matches and the line falls within `[start - N, end + N]`. With padded diffs of 80-250 changed lines across several hunks, an 11-line window is a real localization test. Multiple hits on one range = one TP plus `dupes`. Non-hitting findings = FP. Case recall = 1 if any range hit.
-Run-level: recall (per case), precision (per finding), F1, $/TP, tokens/TP, tool_errors, parse_failures, errored cases (excluded from precision/recall, reported separately). PR curve over confidence thresholds.
+Run-level: recall (per case), precision (per finding), F1, $/TP, tokens/TP, tool_errors, parse_failures, errored cases (excluded from precision/recall, reported separately; still counted in cost and tokens). A case is errored when it stopped with `stop=error` or `stop=timeout`: those are harness or provider outcomes, not model misses. $/TP and tokens/TP divide by found cases (a case counts once however many ranges were hit). A metric with no data (no findings, or no non-errored cases) is reported as undefined, not 0. PR curve over confidence thresholds.
 No automated matching of `claim` text against commit messages (too brittle; fix messages are often just "Fix #123").
 
 **baseline** - `whippletree run baseline --dataset ... --strategy random` emits K findings at random changed lines of the case diff (post-image line numbers), skipping the loop and providers. Its scores set the floor every model must beat and confirm the scoring can't be gamed by guessing lines.
@@ -129,13 +130,16 @@ Phase 2 (coder -> test-writer -> reviewer) is a sequential Python pipeline that 
 
 | Condition | Handling | Recorded as |
 | --- | --- | --- |
-| 429 / 5xx | retry, exponential backoff, 3 tries | `retries` |
+| 429 / 5xx | retry, exponential backoff, 3 retries (4 attempts) | `retries` |
 | Provider still failing | case marked errored | `stop=error`, excluded from P/R |
 | Bad tool-call JSON / unknown tool / path escape | error string returned to model as tool result | `tool_errors` |
 | Invalid `submit_findings` call | error returned as tool result; model retries within limits | `parse_failures`, `tool_errors` |
 | Turn with no tool calls, no submission | one nudge ("call `submit_findings`"), then stop with zero findings | `nudges`, `stop=no_submit` |
 | Oversized tool output | truncated with marker | `truncated_bytes` |
-| Budget / steps / time exhausted | stop; zero findings (nothing was submitted) | `stop=budget | max_steps | timeout` |
+| Model output cut off at max output length | counted; a bad-JSON tool error says the output was cut off | `truncated_outputs` |
+| Last turn coming up, or 80% of token budget used | one last-chance warning to submit now | `warnings` |
+| Budget / steps exhausted | stop; zero findings (nothing was submitted) | `stop=budget | max_steps` |
+| Wall clock exceeded (retry backoff excluded) | stop; case marked errored unless the last response submitted | `stop=timeout`, excluded from P/R |
 
 Defaults: `max_steps=20`, `token_budget=200_000`, `wall_clock=300s`, temperature 0 where supported.
 Cost: provider-reported `cost_usd` when present, else `pricing.py` table; the trace records which source was used.

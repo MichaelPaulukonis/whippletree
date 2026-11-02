@@ -1,5 +1,6 @@
 """The reviewer role: a prompt, read-only tools, and a terminal submit_findings tool."""
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -21,7 +22,10 @@ When you are done, call submit_findings exactly once with every bug you found
 - file: path relative to the repository root
 - line: line number in the PR's head version
 - claim: one sentence saying what is wrong
-- confidence: a number from 0 to 1"""
+- confidence: a number from 0 to 1
+
+The review gets at most {max_steps} model turns (each of your replies is one turn).
+Call submit_findings before you run out; anything not submitted is lost."""
 
 SUBMIT_PARAMETERS = {
     "type": "object",
@@ -61,6 +65,8 @@ def validate_findings(args: dict) -> list[Finding]:
         file, line, claim, conf = (f[k] for k in KEYS)
         if not isinstance(file, str) or not file:
             raise ToolError(f"finding {i}: 'file' must be a non-empty string")
+        if isinstance(line, float) and line.is_integer():
+            line = int(line)  # some models send 12.0 for an integer field
         if isinstance(line, bool) or not isinstance(line, int) or line < 1:
             raise ToolError(f"finding {i}: 'line' must be an integer >= 1")
         if not isinstance(claim, str) or not claim:
@@ -81,8 +87,15 @@ def make_submit_tool() -> Tool:
     )
 
 
+def build_system_prompt(limits: Limits | None = None) -> str:
+    return SYSTEM_PROMPT.format(max_steps=(limits or Limits()).max_steps)
+
+
 def build_user_message(case: Case) -> str:
-    return f"Review this pull request.\n\n```diff\n{case.diff}\n```"
+    # The fence must be longer than any backtick run in the diff, or the diff can close it.
+    longest = max((len(m) for m in re.findall(r"`+", case.diff)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"Review this pull request.\n\n{fence}diff\n{case.diff}\n{fence}"
 
 
 @dataclass
@@ -105,7 +118,7 @@ def review(
 ) -> ReviewResult:
     tools = build_fs_tools(ToolEnv(case.checkout_path)) + [make_submit_tool()]
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": build_system_prompt(limits)},
         {"role": "user", "content": build_user_message(case)},
     ]
     result = run(provider, model, messages, tools, limits=limits, settings=settings,
