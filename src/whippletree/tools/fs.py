@@ -31,18 +31,23 @@ def _required(args: dict, key: str) -> str:
 
 
 def _optional_int(args: dict, key: str, default: int) -> int:
-    if key not in args:
+    value = args.get(key)
+    if value is None:
         return default
-    value = args[key]
     if not isinstance(value, int) or isinstance(value, bool):
         raise ToolError(f"argument '{key}' must be an integer")
     return value
 
 
 def _optional_path(args: dict) -> str:
-    if "path" not in args:
+    if args.get("path") is None:
         return "."
     return _required(args, "path")
+
+
+def _inside_no_git(root: Path, f: Path) -> bool:
+    r = f.resolve()
+    return root in r.parents and ".git" not in r.relative_to(root).parts
 
 
 def build_fs_tools(env: ToolEnv) -> list[Tool]:
@@ -84,7 +89,7 @@ def build_fs_tools(env: ToolEnv) -> list[Tool]:
                 for f in base.rglob("*")
                 if f.is_file()
                 and ".git" not in f.relative_to(root).parts
-                and root in f.resolve().parents
+                and _inside_no_git(root, f)
             )
         out = []
         for f in files:

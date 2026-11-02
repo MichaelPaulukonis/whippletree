@@ -72,7 +72,7 @@ def test_grep_does_not_follow_file_symlink_out_of_checkout(tmp_path, tmp_path_fa
     assert "inner.txt:1:plain" in grep.fn({"pattern": "plain"})
 
 
-@pytest.mark.parametrize("bad", ["abc", None, "10", True, 1.5])
+@pytest.mark.parametrize("bad", ["abc", "10", True, 1.5])
 @pytest.mark.parametrize("key", ["start", "end"])
 def test_read_file_bad_range_is_tool_error(tools, key, bad):
     with pytest.raises(ToolError, match=key):
@@ -80,7 +80,7 @@ def test_read_file_bad_range_is_tool_error(tools, key, bad):
 
 
 @pytest.mark.parametrize("tool", ["list_dir", "grep"])
-@pytest.mark.parametrize("bad", [5, "", None])
+@pytest.mark.parametrize("bad", [5, ""])
 def test_optional_path_must_be_nonempty_string(tools, tool, bad):
     with pytest.raises(ToolError, match="path"):
         tools[tool].fn({"pattern": "x", "path": bad})
@@ -114,3 +114,17 @@ def test_grep_skips_large_files(tools, monkeypatch):
     monkeypatch.setattr("whippletree.tools.fs.MAX_GREP_FILE_BYTES", 12)
     # b.txt (10 bytes) is searched; pkg/a.py (19 bytes) is skipped
     assert tools["grep"].fn({"pattern": "two"}) == "b.txt:1:hello two"
+
+
+def test_null_optional_args_mean_default(tools):
+    assert tools["read_file"].fn({"path": "pkg/a.py", "start": None, "end": None}).startswith("1\tone")
+    assert tools["list_dir"].fn({"path": None}) == "b.txt\npkg/"
+    assert "b.txt:1" in tools["grep"].fn({"pattern": "two", "path": None})
+
+
+def test_grep_does_not_read_git_through_symlink(tmp_path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "config").write_text("url = secret-remote\n")
+    (tmp_path / "cfg").symlink_to(tmp_path / ".git" / "config")
+    grep = {t.name: t for t in build_fs_tools(ToolEnv(tmp_path))}["grep"]
+    assert grep.fn({"pattern": "secret-remote"}) == "(no matches)"
