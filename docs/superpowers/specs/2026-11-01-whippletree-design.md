@@ -32,7 +32,7 @@ v0 itself tests none of these directly; it produces the read-only baseline every
 | 1b | Docker sandbox per bug, `run_tests` tool, network off (verifier) | separate |
 | 1c | Native `anthropic` + `google-genai` adapters, benchmarked vs OpenRouter | separate |
 | 2 | Coder -> test-writer -> reviewer pipeline on SWE-bench Verified subset | separate |
-| later | Diff-review mode (SZZ bug-introducing commits); context management / token budgets (C); safety and permissions (D); optional REPL | separate |
+| later | SZZ realism-check subset; context management / token budgets (C); safety and permissions (D); optional REPL | separate |
 
 ## Decisions
 
@@ -57,7 +57,7 @@ whippletree/
       fs.py              read_file, list_dir, grep (built per case from ToolEnv)
     roles/
       reviewer.py        system prompt, submit_findings terminal tool + validation
-    baseline.py          dumb reviewer (random lines in target files) - scoring sanity check
+    baseline.py          dumb reviewer (random changed lines in the diff) - scoring sanity check
     datasets/
       base.py            Case, GroundTruth
       bugsinpy.py
@@ -88,19 +88,26 @@ The loop is flat and single-agent. It knows nothing about roles, datasets, or wh
 
 **tools** - plain functions with a JSON schema each, built per case from a `ToolEnv`. In 1a, `ToolEnv` holds `checkout_path`; in 1b it also holds the Docker sandbox handle, so the loop never changes between local and container execution. All paths resolve inside the checkout; anything escaping it is a tool error. Output truncated at `max_tool_output_bytes` (default 20 KB) with a `[truncated N bytes]` marker.
 
-**roles/reviewer** - builds the system prompt and user message: the list of target files plus a short instruction to review them for bugs in the context of the repository. Provides the terminal tool `submit_findings(findings: list[Finding])`, where `Finding = {file, line, claim, confidence: 0..1}`. Validation checks the schema, types, and confidence range; it does not check that the file or line exists (that would leak hints). Validation failures count as `parse_failures` as well as `tool_errors`. If the loop ends with `stop=no_submit`, the case scores zero findings.
+**roles/reviewer** - builds the system prompt and user message: the case's PR-style diff plus a short instruction to review it for bugs, using the tools to read surrounding code as needed. Provides the terminal tool `submit_findings(findings: list[Finding])`, where `Finding = {file, line, claim, confidence: 0..1}`. Validation checks the schema, types, and confidence range; it does not check that the file or line exists (that would leak hints). Validation failures count as `parse_failures` as well as `tool_errors`. If the loop ends with `stop=no_submit`, the case scores zero findings.
 
-**datasets** - `Case = {id, dataset, checkout_path, target_files: list[str], diff: str | None, ground_truth: list[{file, start, end}]}`. `diff` is `None` in M1 (whole-file review); it is kept for later diff-review modes.
+**datasets** - `Case = {id, dataset, checkout_path, diff, padding: {base, commits, changed_lines}, ground_truth: list[{file, start, end}]}`.
 
-- BugsInPy: the checkout is the buggy commit; `target_files` are the files the fix touched; ground truth is the fix's touched ranges in buggy-version line numbers. A hunk that only adds lines (e.g. a missing guard clause) has no buggy-version lines, so it becomes a zero-width range at the insertion point (`start = end =` the line before the insertion). The reversed fix diff is never shown: it would point straight at the bug. Repos are cloned to `~/.cache/whippletree/bugsinpy/`.
-- Seeded: same shape, stored under `datasets/seeded/<case-id>/` with `truth.json` (target files + ranges) and a small source tree.
+- BugsInPy, **padded diffs**: the bare reversed fix diff is never shown on its own, because the whole diff would be the bug. Instead each case is one real, coherent PR-sized diff that ends at the buggy commit `B`:
+  1. Walk back first-parent from `B` to pick a base `B~K`, choosing the smallest K whose `B~K..B` diff brings the total to >= 80 changed lines. Cap at 250; skip a commit that alone exceeds the cap.
+  2. Apply the fix patch (`B -> F`) onto `B~K` to make a synthetic base `X`. If the fix doesn't apply cleanly there, try a smaller K; if only K=0 works, skip the case.
+  3. `Case.diff = git diff X B`: K commits of real work plus the bug's introduction, with one (or a few) bug hunks among several innocent ones.
+  - The checkout stays at `B`, so the diff's post-image matches what the tools read. Ground truth is the fix's touched ranges in `B`'s line numbers.
+  - A fix hunk that only adds lines (e.g. a missing guard clause) has no lines in `B`, so it becomes a zero-width range at the insertion point (`start = end =` the line before the insertion).
+  - Skipped cases are counted and reported, with the reason. The `padding` record (base, commits, changed lines) goes into the trace so every diff can be rebuilt.
+  - Repos are cloned to `~/.cache/whippletree/bugsinpy/`.
+- Seeded: same shape, stored under `datasets/seeded/<case-id>/` with `diff.patch` (hand-written, multi-hunk, one planted bug), `truth.json`, and a small source tree.
 
 **scoring** - pure function `score(findings, ground_truth, line_window=5) -> CaseScore`.
-A finding hits a ground-truth range if the file matches and the line falls within `[start - N, end + N]`. Because the reviewer reads whole files (often hundreds of lines), this is a real localization test. Multiple hits on one range = one TP plus `dupes`. Non-hitting findings = FP. Case recall = 1 if any range hit.
+A finding hits a ground-truth range if the file matches and the line falls within `[start - N, end + N]`. With padded diffs of 80-250 changed lines across several hunks, an 11-line window is a real localization test. Multiple hits on one range = one TP plus `dupes`. Non-hitting findings = FP. Case recall = 1 if any range hit.
 Run-level: recall (per case), precision (per finding), F1, $/TP, tokens/TP, tool_errors, parse_failures, errored cases (excluded from precision/recall, reported separately). PR curve over confidence thresholds.
 No automated matching of `claim` text against commit messages (too brittle; fix messages are often just "Fix #123").
 
-**baseline** - `whippletree run baseline --dataset ... --strategy random` emits K random-line findings per target file, skipping the loop and providers. Its scores set the floor every model must beat and confirm the scoring can't be gamed by guessing lines.
+**baseline** - `whippletree run baseline --dataset ... --strategy random` emits K findings at random changed lines of the case diff (post-image line numbers), skipping the loop and providers. Its scores set the floor every model must beat and confirm the scoring can't be gamed by guessing lines.
 
 **traces** - one JSONL file per run in `runs/<run-id>.jsonl`. First line is a header: run id, git SHA, model, served_by, settings, dataset + version, limits. Then one line per model call (tokens, cost, latency, stop_reason, tool calls) and one per case result. Write-only; `report` reads it back.
 
@@ -136,8 +143,8 @@ Cost: provider-reported `cost_usd` when present, else `pricing.py` table; the tr
 ## Known biases (reported, not hidden)
 
 1. Line matching can't judge the diagnosis. v0 hand-audits ~20 FPs per model (report the share that are real, unlabeled bugs) and ~20 TPs per model (report the "right line, wrong diagnosis" rate). No LLM judge.
-2. Telling the reviewer which files to read hands it file-level localization for free. Recall here means "found the bug given the right file", not "found the bug in the repo".
-3. Whole-file auditing is not the same task as reviewing a PR diff, which is what the primary goal (a review policy) is about. Later diff-review mode: find the real bug-introducing commit with SZZ (blame the fix's lines back to the commit that last touched them) and review that diff. SZZ is the standard method in defect research, and noisy, which gets reported too.
+2. Reversal artifact: the bug hunk is a fix played backwards, so it often reads as "a check was deleted", while the padding hunks read as ordinary forward work. A model may learn to spot deletions rather than bugs. Report recall split by bug hunk type (pure deletion vs. modification); the seeded set, where bugs are written forward, is the comparison.
+3. Padding is synthetic: real bug-introducing PRs mix the bug with *related* work, while padding commits may be unrelated. Later realism check: an SZZ subset (blame the fix's lines back to the commit that introduced them) on the ~60% of cases where SZZ resolves cleanly.
 4. Contamination: models may have seen these repos. The seeded set is the control.
 5. One BugsInPy bug per case; some fixes touch several hunks - all ranges count as the one bug for recall.
 
@@ -148,7 +155,7 @@ Test-first throughout.
 - **providers:** recorded JSON responses as fixtures; no network.
 - **loop:** fake provider returning a scripted sequence; one test per stop reason and per error-handling row, including terminal-tool success, terminal-tool validation failure then retry, and nudge then `no_submit`.
 - **scoring:** table-driven tests (hits, window edges, zero-width insertion ranges, dupes, FPs, empty).
-- **datasets:** one tiny fixture case per loader, including an add-only fix hunk.
+- **datasets:** one tiny fixture case per loader, including an add-only fix hunk. Padding builder against a small fixture git repo: picks K by line budget, skips oversized commits, falls back when the fix won't apply, skips when only K=0 works, and the diff's post-image equals `B`.
 - **reviewer:** `submit_findings` validation (valid, missing keys, wrong types, confidence out of range).
 - **baseline:** deterministic under a fixed seed.
 - **live smoke (marked `live`, not in CI):** `whippletree run review --dataset seeded --model ollama:llama3.1:8b --limit 1`.
