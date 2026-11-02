@@ -34,14 +34,17 @@ class OpenAICompatProvider:
         self.client = client
 
     def build_request(self, messages, tools, model, settings) -> dict:
-        req = {"model": model, "messages": messages, **settings}
+        req = {**settings, "model": model, "messages": messages}
+        extra = dict(settings.get("extra_body") or {})
         if tools:
             req["tools"] = tools
         if self.name == "openrouter":
-            extra = {"usage": {"include": True}}
+            extra["usage"] = {"include": True}
             if self.routing:
                 # Pin the backend so one model id isn't silently served by different hosts.
                 extra["provider"] = {"order": self.routing, "allow_fallbacks": False}
+        req.pop("extra_body", None)
+        if extra:
             req["extra_body"] = extra
         return req
 
@@ -49,30 +52,59 @@ class OpenAICompatProvider:
         req = self.build_request(messages, tools, model, settings)
         try:
             raw = self.client.chat.completions.create(**req)
-        except (openai.RateLimitError, openai.InternalServerError, openai.APIConnectionError) as e:
+        except openai.APIConnectionError as e:  # includes timeouts
             raise TransientError(str(e)) from e
         except openai.APIStatusError as e:
-            if e.status_code >= 500:
+            if _is_transient_code(e.status_code):
                 raise TransientError(str(e)) from e
+            raise ProviderError(str(e)) from e
+        except openai.APIError as e:
             raise ProviderError(str(e)) from e
         return parse_response(raw)
 
 
+def _is_transient_code(code) -> bool:
+    """Missing or unrecognised codes count as transient: retrying is the safe guess."""
+    if not isinstance(code, int) or isinstance(code, bool):
+        return True
+    return code in (408, 409, 429) or code >= 500
+
+
+def _raise_upstream_error(raw, choice=None):
+    err = (raw.model_extra or {}).get("error")
+    if not err and choice is not None:
+        err = (choice.model_extra or {}).get("error")
+    err = err or {}
+    code = err.get("code") if isinstance(err, dict) else None
+    msg = f"upstream error (code {code}): {err}"
+    if _is_transient_code(code):
+        raise TransientError(msg)
+    raise ProviderError(msg)
+
+
 def parse_response(raw) -> Response:
+    if not raw.choices:
+        _raise_upstream_error(raw)
     choice = raw.choices[0]
+    if choice.finish_reason == "error":
+        _raise_upstream_error(raw, choice)
     msg = choice.message
-    calls = [
-        ToolCall(id=c.id, name=c.function.name, arguments=c.function.arguments or "{}")
-        for c in (msg.tool_calls or [])
-        if c.type == "function"
-    ]
+    calls = []
+    for i, c in enumerate(msg.tool_calls or []):
+        kind = getattr(c, "type", None)
+        if getattr(c, "function", None) is None or kind not in (None, "function"):
+            raise ProviderError(f"unsupported tool call type {kind!r}")
+        calls.append(
+            ToolCall(id=c.id or f"call_{i}", name=c.function.name,
+                     arguments=c.function.arguments or "{}")
+        )
     u = raw.usage
     usage = Usage()
     cost = None
     if u is not None:
         details = u.prompt_tokens_details
         cached = (details.cached_tokens or 0) if details else 0
-        usage = Usage(input=u.prompt_tokens, output=u.completion_tokens, cached=cached)
+        usage = Usage(input=u.prompt_tokens or 0, output=u.completion_tokens or 0, cached=cached)
         cost = (u.model_extra or {}).get("cost")  # OpenRouter usage accounting
     return Response(
         text=msg.content or "",

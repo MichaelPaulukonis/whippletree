@@ -19,6 +19,7 @@ class Usage:
 
     @property
     def total(self) -> int:
+        # cached is already counted inside input (OpenAI/OpenRouter), so it is excluded on purpose
         return self.input + self.output
 
 

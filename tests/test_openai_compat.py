@@ -142,3 +142,101 @@ def test_openrouter_without_key_fails_clearly(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     with pytest.raises(ProviderError, match="OPENROUTER_API_KEY"):
         OpenAICompatProvider("openrouter")
+
+
+def _payload(**overrides):
+    return {**TEXT_RESPONSE, **overrides}
+
+
+def _no_choices(code):
+    err = {"message": "upstream", "code": code} if code is not None else {}
+    return ChatCompletion.model_validate(_payload(choices=[], error=err))
+
+
+@pytest.mark.parametrize("code", [429, 408, 409, 500, 503, None])
+def test_empty_choices_with_transient_error(code):
+    with pytest.raises(TransientError):
+        parse_response(_no_choices(code))
+
+
+@pytest.mark.parametrize("code", [400, 401, 402, 403])
+def test_empty_choices_with_permanent_error(code):
+    with pytest.raises(ProviderError) as ei:
+        parse_response(_no_choices(code))
+    assert not isinstance(ei.value, TransientError)
+
+
+def test_finish_reason_error_is_classified():
+    # "error" is not in the SDK's finish_reason Literal, so build without validation
+    raw = ChatCompletion.model_validate(TEXT_RESPONSE)
+    raw.choices[0].finish_reason = "error"
+    with pytest.raises(TransientError):
+        parse_response(raw)
+    raw.model_extra["error"] = {"code": 400}
+    with pytest.raises(ProviderError):
+        parse_response(raw)
+
+
+def test_tool_call_without_type_is_kept():
+    # the SDK models require `type`, so null it after validation (as lenient backends send it)
+    raw = ChatCompletion.model_validate(TOOL_CALL_RESPONSE)
+    raw.choices[0].message.tool_calls[0].type = None
+    assert parse_response(raw).tool_calls == [
+        ToolCall(id="call_1", name="read_file", arguments='{"path": "a.py"}')
+    ]
+
+
+def test_tool_call_of_other_type_is_surfaced():
+    raw = ChatCompletion.model_validate(TOOL_CALL_RESPONSE)
+    raw.choices[0].message.tool_calls[0].type = "custom"
+    with pytest.raises(ProviderError, match="custom"):
+        parse_response(raw)
+
+
+def test_empty_tool_call_ids_get_index_fallback():
+    raw = ChatCompletion.model_validate(TOOL_CALL_RESPONSE)
+    first = raw.choices[0].message.tool_calls[0]
+    calls = [first.model_copy(update={"id": i}) for i in (None, "", "real")]
+    raw.choices[0].message.tool_calls = calls
+    r = parse_response(raw)
+    assert [c.id for c in r.tool_calls] == ["call_0", "call_1", "real"]
+
+
+@pytest.mark.parametrize("code", [408, 409])
+def test_extra_transient_status_codes(code):
+    exc = openai.APIStatusError(
+        "boom", response=httpx2.Response(code, request=httpx2.Request("POST", "https://e.test")),
+        body=None)
+    with pytest.raises(TransientError):
+        _provider(FakeCompletions(exc=exc)).complete([], [], "m", {})
+
+
+def test_other_sdk_errors_become_provider_error():
+    exc = openai.APIResponseValidationError(
+        httpx2.Response(200, request=httpx2.Request("POST", "https://e.test")), body=None)
+    with pytest.raises(ProviderError) as ei:
+        _provider(FakeCompletions(exc=exc)).complete([], [], "m", {})
+    assert not isinstance(ei.value, TransientError)
+
+
+def test_none_token_counts_become_zero():
+    raw = ChatCompletion.model_validate(TEXT_RESPONSE)
+    raw.usage.prompt_tokens = None
+    raw.usage.completion_tokens = None
+    assert parse_response(raw).usage == Usage(0, 0, 0)
+
+
+def test_settings_cannot_override_reserved_keys_and_extra_body_merges():
+    p = OpenAICompatProvider("openrouter", client=object())
+    req = p.build_request([{"role": "user", "content": "x"}], [], "real-model",
+                          {"model": "evil", "messages": [], "extra_body": {"top_k": 5,
+                           "usage": {"include": False}}})
+    assert req["model"] == "real-model"
+    assert req["messages"] == [{"role": "user", "content": "x"}]
+    assert req["extra_body"] == {"top_k": 5, "usage": {"include": True}}
+
+
+def test_extra_body_setting_kept_on_ollama():
+    p = OpenAICompatProvider("ollama", client=object())
+    req = p.build_request([], [], "m", {"extra_body": {"top_k": 5}})
+    assert req["extra_body"] == {"top_k": 5}
