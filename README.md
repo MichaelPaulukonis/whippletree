@@ -1,10 +1,14 @@
 # whippletree
 
-A whippletree is the crossbar that balances the pull between several horses hitched to one load. Here the horses are models.
-
 Whippletree is a self-built coding-agent harness. Milestone 1 benchmarks code review across models: a reviewer agent reads a PR-style diff containing one known bug, uses read-only tools on the repository, and submits findings. Whippletree scores them against ground truth and logs every model call.
 
 **Status:** the harness runs end to end on a small hand-seeded set. No benchmark results yet; BugsInPy cases are next.
+
+![Twenty-six horse combined harvester at work, Washington, 1905](docs/img/twenty-six-horse-combine-1905.jpg)
+
+*Twenty-six horse combined harvester at work, reaping, threshing and sacking, Wash., U.S.A. Stereograph, H. C. White Co., 1905. [New York Public Library](https://digitalcollections.nypl.org/search/index?keywords=G92F080_041F), Robert N. Dennis collection of stereoscopic views. Public domain in the US.*
+
+A whippletree is the crossbar that balances the pull between several horses hitched to one load; stack them and twenty-six horses pull one harvester. Whippletrees also did addition in mechanical computers and hold Alexander Calder's mobiles in balance. Here the horses are models.
 
 ## Hypotheses
 
