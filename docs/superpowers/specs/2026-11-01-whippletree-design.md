@@ -8,7 +8,7 @@ A whippletree is the crossbar that balances the pull between several horses hitc
 
 ## Purpose
 
-Whippletree is a public, self-built Python coding-agent harness. It exists to learn agent harnesses from the inside and to produce measured, chartable results for a staff-level agentic-coding pitch.
+Whippletree is a public, self-built Python coding-agent harness. It exists to learn agent harnesses from the inside and to turn design decisions about agents into measured, chartable results rather than opinions.
 
 ### Goal once measured
 
