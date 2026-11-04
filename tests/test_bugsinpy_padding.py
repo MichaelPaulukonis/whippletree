@@ -3,7 +3,14 @@
 import pytest
 
 from tests.gitrepo import commit, git, init_repo, lines, padded_history
-from whippletree.datasets.bugsinpy import SkipCase, _git, changed_lines, pick_base
+from whippletree.datasets.bugsinpy import (
+    SkipCase,
+    _git,
+    apply_onto,
+    build_padded,
+    changed_lines,
+    pick_base,
+)
 
 
 def test_changed_lines_counts_adds_and_deletes(tmp_path):
@@ -70,3 +77,51 @@ def test_git_tolerates_non_utf8_content(tmp_path):
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "-m", "latin1")
     assert isinstance(_git(repo, "show", "HEAD:l.py"), str)
+
+
+def test_apply_onto_returns_tree_or_none(tmp_path):
+    s = padded_history(tmp_path / "r", bug_at=2)
+    repo = tmp_path / "r"
+    assert apply_onto(repo, s["c1"], s["patch"]) is None  # c1 has no `x + 2` yet
+    tree = apply_onto(repo, s["c2"], s["patch"])
+    assert tree is not None
+    assert "return x + 1" in git(repo, "show", f"{tree}:app.py")
+    assert git(repo, "status", "--porcelain") == ""  # real index and checkout untouched
+
+
+def test_apply_onto_tolerates_missing_final_newline(tmp_path):
+    s = padded_history(tmp_path / "r")
+    assert apply_onto(tmp_path / "r", s["B"], s["patch"].rstrip("\n")) is not None
+
+
+def test_build_padded_diff_and_record(tmp_path):
+    s = padded_history(tmp_path / "r")
+    diff, padding = build_padded(tmp_path / "r", s["B"], s["patch"], min_lines=50)
+    assert padding.base == s["c1"]
+    assert padding.commits == (s["c2"], s["B"])
+    assert padding.changed_lines == 62  # 60 padding + the reverted fix (1 del, 1 add)
+    assert "-    return x + 1\n+    return x + 2" in diff  # the fix, played backwards
+    assert "+++ b/pad2.py" in diff and "+++ b/pad3.py" in diff
+    assert "pad1.py" not in diff  # already in the base
+
+
+def test_build_padded_post_image_equals_buggy(tmp_path):
+    s = padded_history(tmp_path / "r")
+    repo = tmp_path / "r"
+    diff, padding = build_padded(repo, s["B"], s["patch"], min_lines=50)
+    x = apply_onto(repo, padding.base, s["patch"])
+    assert apply_onto(repo, x, diff) == git(repo, "rev-parse", f"{s['B']}^{{tree}}").strip()
+
+
+def test_skips_when_fix_wont_apply_at_base(tmp_path):
+    # Bug introduced at c2, inside the padding: the fix can't apply at base c1.
+    s = padded_history(tmp_path / "r", bug_at=2)
+    with pytest.raises(SkipCase, match="fix-does-not-apply"):
+        build_padded(tmp_path / "r", s["B"], s["patch"], min_lines=50)
+
+
+def test_skips_when_final_diff_over_max(tmp_path):
+    s = padded_history(tmp_path / "r")
+    # B~2..B is 60 (fits max 61); the reverted fix adds 2 -> 62 > 61.
+    with pytest.raises(SkipCase, match="padding-out-of-bounds"):
+        build_padded(tmp_path / "r", s["B"], s["patch"], min_lines=50, max_lines=61)

@@ -9,9 +9,10 @@ numbers, which are the head-side line numbers of the padded diff.
 import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
-from whippletree.case import Range
+from whippletree.case import Padding, Range
 
 MIN_LINES, MAX_LINES, MAX_WALK = 80, 250, 50
 
@@ -145,3 +146,39 @@ def pick_base(repo: Path, buggy: str, min_lines: int = MIN_LINES, max_lines: int
         if n >= min_lines:
             return chain[k], tuple(reversed(chain[:k]))
     raise SkipCase("padding-under-min-lines")
+
+
+def apply_onto(repo: Path, base: str, patch: str) -> str | None:
+    """Tree sha of `base` (commit or tree) with `patch` applied, or None if it doesn't apply.
+
+    Uses a throwaway index (GIT_INDEX_FILE in a TemporaryDirectory): read-tree base,
+    apply --cached (patch on stdin), write-tree. The repo's own index and checkout are untouched.
+    """
+    if not patch.endswith("\n"):
+        patch += "\n"  # git apply rejects a patch without a final newline as corrupt
+    with tempfile.TemporaryDirectory() as tmp:
+        env = {"GIT_INDEX_FILE": str(Path(tmp) / "index")}
+        _git(repo, "read-tree", base, env=env)
+        try:
+            _git(repo, "apply", "--cached", input=patch, env=env)
+        except GitError:
+            return None
+        return _git(repo, "write-tree", env=env).strip()
+
+
+def build_padded(repo: Path, buggy: str, patch: str, min_lines: int = MIN_LINES,
+                 max_lines: int = MAX_LINES) -> tuple[str, Padding]:
+    """`git diff X B` (X = pick_base's base + fix) and its Padding record.
+
+    Raises SkipCase: anything from pick_base, "fix-does-not-apply", "padding-out-of-bounds"
+    (final X..B size outside [min_lines, max_lines]). Padding.changed_lines is the X..B size.
+    """
+    base, commits = pick_base(repo, buggy, min_lines, max_lines)
+    x = apply_onto(repo, base, patch)
+    if x is None:
+        raise SkipCase("fix-does-not-apply")
+    size = changed_lines(repo, x, buggy)
+    if not min_lines <= size <= max_lines:
+        raise SkipCase("padding-out-of-bounds")
+    diff = _git(repo, "diff", *_DIFF_FLAGS, x, buggy)
+    return diff, Padding(base=base, commits=commits, changed_lines=size)
