@@ -32,9 +32,9 @@ cp .env.example .env                     # add OPENROUTER_API_KEY for OpenRouter
 
 uv run whippletree run baseline --dataset seeded
 uv run whippletree run review --dataset seeded --model ollama:llama3.1:8b
-uv run whippletree run review --dataset seeded --model openrouter:google/gemini-2.5-pro --routing google-vertex
+uv run whippletree run review --dataset seeded --model openrouter:google/gemini-4-argon --routing google-vertex
 uv run whippletree run baseline --dataset bugsinpy --limit 24   # first run clones into ~/.cache/whippletree/bugsinpy/
-uv run whippletree run review --dataset bugsinpy --limit 24 --model openrouter:google/gemini-2.5-pro
+uv run whippletree run review --dataset bugsinpy --limit 24 --model openrouter:google/gemini-4-argon
 uv run whippletree report <run-id> [<run-id> ...]
 ```
 
