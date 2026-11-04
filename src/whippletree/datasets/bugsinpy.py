@@ -53,6 +53,7 @@ def parse_patch_ranges(patch: str) -> tuple[Range, ...]:
                 start = int(m.group(1))
                 old_rem = 1 if m.group(2) is None else int(m.group(2))
                 new_rem = 1 if m.group(3) is None else int(m.group(3))
+                # count 0: start is the line before the insertion
                 old_ln = start + 1 if old_rem == 0 else start
             continue
         if line.startswith("\\"):

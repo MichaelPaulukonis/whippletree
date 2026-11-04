@@ -87,6 +87,11 @@ def test_no_newline_marker_and_blank_context_are_harmless():
     assert parse_patch_ranges(patch) == (Range("f.py", 3, 3),)
 
 
+def test_removed_line_that_looks_like_a_file_header_stays_in_hunk():
+    patch = _patch(*_header("f.py"), "@@ -1,2 +1,1 @@", "--- a/x", " y")
+    assert parse_patch_ranges(patch) == (Range("f.py", 1, 1),)
+
+
 def test_empty_patch_has_no_ranges():
     assert parse_patch_ranges("") == ()
 
