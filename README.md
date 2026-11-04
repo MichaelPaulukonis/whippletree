@@ -2,7 +2,7 @@
 
 Whippletree is a self-built coding-agent harness. Milestone 1 benchmarks code review across models: a reviewer agent reads a PR-style diff containing one known bug, uses read-only tools on the repository, and submits findings. Whippletree scores them against ground truth and logs every model call.
 
-**Status:** the harness runs end to end on a small hand-seeded set. No benchmark results yet; BugsInPy cases are next.
+**Status:** the harness runs end to end on a small hand-seeded set and on BugsInPy cases. No benchmark results yet.
 
 ![Twenty-six horse combined harvester at work, Washington, 1905](docs/img/twenty-six-horse-combine-1905.jpg)
 
@@ -33,10 +33,19 @@ cp .env.example .env                     # add OPENROUTER_API_KEY for OpenRouter
 uv run whippletree run baseline --dataset seeded
 uv run whippletree run review --dataset seeded --model ollama:llama3.1:8b
 uv run whippletree run review --dataset seeded --model openrouter:google/gemini-2.5-pro --routing google-vertex
+uv run whippletree run baseline --dataset bugsinpy --limit 24   # first run clones into ~/.cache/whippletree/bugsinpy/
+uv run whippletree run review --dataset bugsinpy --limit 24 --model openrouter:google/gemini-2.5-pro
 uv run whippletree report <run-id> [<run-id> ...]
 ```
 
 `--routing` pins the OpenRouter backend by provider slug (OpenRouter's `provider.order` takes slugs such as `google-vertex`, not display names; copy the slug from the model's page on openrouter.ai). Fallbacks are disabled, so a request fails rather than being served by a different backend.
+
+The BugsInPy cache lives in `~/.cache/whippletree/bugsinpy/`; delete it to rebuild.
+
+- Layout: BugsInPy metadata (shallow, never refreshed on purpose, for reproducibility; delete to refresh), blobless full-history project clones under `repos/`, one detached worktree per case at the buggy commit under `checkouts/`.
+- The first run needs network. Warm the cache with one run (e.g. the baseline) before running several models in parallel; concurrent cold-cache runs can clobber each other's clones.
+- Load-time skips are printed to stderr and recorded in the trace header; `report` shows a `skipped at load:` line. On a cold cache, `commit-missing` skips can mean the network was down, not that the dataset is wrong.
+- Default projects (small repos): PySnooper, cookiecutter, httpie, sanic, tqdm, thefuck. `--case bugsinpy/<project>/<n>` works for any BugsInPy project.
 
 Traces go to `runs/<run-id>.jsonl` (gitignored). Curated results go in `results/`.
 

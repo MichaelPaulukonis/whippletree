@@ -1,6 +1,6 @@
 # whippletree
 
-Self-built Python harness that benchmarks cross-model code review. A reviewer agent gets a PR-style diff containing one known bug, explores the repo with read-only tools (`read_file`, `list_dir`, `grep`), and submits findings. Whippletree scores them against ground truth and logs every model call to a JSONL trace. Milestone 1 runs on a hand-seeded set; BugsInPy is next.
+Self-built Python harness that benchmarks cross-model code review. A reviewer agent gets a PR-style diff containing one known bug, explores the repo with read-only tools (`read_file`, `list_dir`, `grep`), and submits findings. Whippletree scores them against ground truth and logs every model call to a JSONL trace. Milestone 1 runs on a hand-seeded set and on BugsInPy (real bugs, padded diffs).
 
 ## Commands
 
@@ -13,6 +13,8 @@ uv run ruff check .
 uv run whippletree run baseline --dataset seeded
 uv run whippletree run review --dataset seeded --model ollama:llama3.1:8b
 uv run whippletree run review --dataset seeded --model openrouter:google/gemini-2.5-pro --routing google-vertex
+uv run whippletree run baseline --dataset bugsinpy --limit 24   # first run clones into ~/.cache/whippletree/bugsinpy/
+uv run whippletree run review --dataset bugsinpy --limit 24 --model openrouter:google/gemini-2.5-pro
 uv run whippletree report <run-id> [<run-id> ...]
 ```
 
@@ -24,6 +26,11 @@ providers (`providers/`, OpenRouter and Ollama via the openai SDK) -> loop (`loo
 
 - Spec: `docs/superpowers/specs/2026-11-01-whippletree-design.md`
 - Plan: `docs/superpowers/plans/2026-11-02-whippletree-core.md`
+- BugsInPy cache: `~/.cache/whippletree/bugsinpy/`. Delete the dir to rebuild.
+  - BugsInPy metadata (shallow, never refreshed on purpose, for reproducibility; delete to refresh), blobless full-history project clones under `repos/`, one detached worktree per case at the buggy commit under `checkouts/`.
+  - First run needs network. Warm the cache with one run (e.g. the baseline) before running several models in parallel; concurrent cold-cache runs can clobber each other's clones.
+  - Load-time skips go to stderr and the trace header; `report` shows a `skipped at load:` line. On a cold cache, `commit-missing` skips can mean the network was down, not that the dataset is wrong.
+  - Default projects (small repos): PySnooper, cookiecutter, httpie, sanic, tqdm, thefuck. `--case bugsinpy/<project>/<n>` works for any BugsInPy project.
 - Seeded cases: `datasets/seeded/`; raw traces: `runs/` (gitignored); curated results: `results/`
 
 ## Conventions
