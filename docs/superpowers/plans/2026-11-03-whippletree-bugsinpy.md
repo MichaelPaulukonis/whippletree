@@ -22,7 +22,7 @@
 4. **Fix patches touching test paths are skipped** (`patch-touches-tests`), about 10 of 502 bugs. Reverting a test file into the diff would plant a "bug" in test code.
 5. **Project subset** - `DEFAULT_PROJECTS = ("PySnooper", "cookiecutter", "httpie", "sanic", "tqdm", "thefuck")`, 58 bugs from small repos. `load_bugsinpy` takes `limit` (stop once N cases build) and `case_id` (`bugsinpy/<proj>/<n>`, any project in BugsInPy, builds only that one).
 6. **Ground truth is one Range per contiguous change run** (flush on context lines). A run with `-` lines is `modification` spanning the removed lines; a pure `+` run is `deletion`, zero-width at the line before the insertion, matching `Range`'s docstring.
-7. **Every other failure is a skip, never a crash:** no ranges (`no-ground-truth`), commit not in repo (`commit-missing`), patch doesn't apply to `B` itself (`patch-does-not-apply-to-buggy`, protects line numbers), a range has no changed line in the final diff (`bug-not-in-diff`), root commit (`no-history`), clone failure (`clone-failed`), anything else from git (`git-error: ...`).
+7. **Every other failure is a skip, never a crash:** no ranges (`no-ground-truth`), commit not in repo (`commit-missing`), patch doesn't apply to `B` itself (`patch-does-not-apply-to-buggy`, protects line numbers), a range has no changed line in the final diff (`bug-not-in-diff`), root commit (`no-history`), clone failure (`clone-failed`, also when a `project.info` lacks `github_url`), diff contains non-UTF-8 bytes that providers can't send (`non-utf8-diff`), `bug.info` / `bug_patch.txt` can't be read (`unreadable: ...`), anything else from git (`git-error: ...`).
 
 ## File structure
 

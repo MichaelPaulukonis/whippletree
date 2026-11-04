@@ -25,11 +25,11 @@ providers (`providers/`, OpenRouter and Ollama via the openai SDK) -> loop (`loo
 ## Where things are
 
 - Spec: `docs/superpowers/specs/2026-11-01-whippletree-design.md`
-- Plan: `docs/superpowers/plans/2026-11-02-whippletree-core.md`
+- Plan: `docs/superpowers/plans/2026-11-02-whippletree-core.md`, `docs/superpowers/plans/2026-11-03-whippletree-bugsinpy.md`
 - BugsInPy cache: `~/.cache/whippletree/bugsinpy/`. Delete the dir to rebuild.
   - BugsInPy metadata (shallow, never refreshed on purpose, for reproducibility; delete to refresh), blobless full-history project clones under `repos/`, one detached worktree per case at the buggy commit under `checkouts/`.
   - First run needs network. Warm the cache with one run (e.g. the baseline) before running several models in parallel; concurrent cold-cache runs can clobber each other's clones.
-  - Load-time skips go to stderr and the trace header; `report` shows a `skipped at load:` line. On a cold cache, `commit-missing` skips can mean the network was down, not that the dataset is wrong.
+  - Load-time skips go to stderr and the trace header; `report` shows a `skipped at load:` line. On a cold cache, `clone-failed` / `git-error` skips can mean the network was down; `commit-missing` means the buggy commit isn't reachable in the clone.
   - Default projects (small repos): PySnooper, cookiecutter, httpie, sanic, tqdm, thefuck. `--case bugsinpy/<project>/<n>` works for any BugsInPy project.
 - Seeded cases: `datasets/seeded/`; raw traces: `runs/` (gitignored); curated results: `results/`
 

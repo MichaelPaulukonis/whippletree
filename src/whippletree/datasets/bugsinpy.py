@@ -252,7 +252,8 @@ def build_case(case_id: str, repo: Path, bug_dir: Path, checkout: Path,
     """One padded case, checkout at B. Raises SkipCase. Check order: no-ground-truth,
     patch-touches-tests, commit-missing, patch-does-not-apply-to-buggy, build_padded's reasons,
     bug-not-in-diff. Create the worktree last, so skipped cases leave no checkout behind."""
-    patch = (bug_dir / "bug_patch.txt").read_text(encoding="utf-8", errors="surrogateescape")
+    patch = (bug_dir / "bug_patch.txt").read_text(encoding="utf-8", errors="surrogateescape",
+                                                newline="")
     ranges = parse_patch_ranges(patch)
     if not ranges:
         raise SkipCase("no-ground-truth")
@@ -266,6 +267,10 @@ def build_case(case_id: str, repo: Path, bug_dir: Path, checkout: Path,
     if apply_onto(repo, buggy, patch) is None:
         raise SkipCase("patch-does-not-apply-to-buggy")
     diff, padding = build_padded(repo, buggy, patch, min_lines, max_lines)
+    try:
+        diff.encode("utf-8")  # lone surrogates from non-UTF-8 bytes can't be sent to a provider
+    except UnicodeEncodeError:
+        raise SkipCase("non-utf8-diff") from None
     touched = diff_changed_lines(diff)
     for r in ranges:
         if not any(f == r.file and r.start <= ln <= r.end for f, ln in touched):

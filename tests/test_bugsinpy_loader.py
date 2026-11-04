@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from tests.gitrepo import commit, git, init_repo, padded_history
+from tests.gitrepo import APP_BUGGY, APP_FIXED, commit, git, init_repo, lines, padded_history
 from whippletree.case import Range
 from whippletree.datasets.bugsinpy import Skip, load_bugsinpy, read_info
 
@@ -124,3 +124,20 @@ def test_limit_does_not_clone_next_project(tmp_path):
     assert [c.id for c in cases] == ["bugsinpy/demo/1"]
     assert skipped == []
     assert not (cache / "repos" / "demo2").exists()
+
+
+def test_non_utf8_diff_is_skipped(tmp_path):
+    repo = init_repo(tmp_path / "upstream")
+    commit(repo, {"app.py": APP_BUGGY})
+    commit(repo, {"pad1.py": lines(30, "a")})
+    (repo / "pad2.py").write_bytes(b"caf\xe9\n" * 30)  # latin-1, not valid UTF-8
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "latin1")
+    b = commit(repo, {"pad3.py": lines(30, "c")})
+    commit(repo, {"app.py": APP_FIXED})
+    patch = git(repo, "diff", b, "HEAD")
+    meta = _metadata(tmp_path, str(repo), {"1": (b, patch)})
+    cases, skipped = load_bugsinpy(cache=tmp_path / "cache", projects=("demo",),
+                                   metadata_url=str(meta), min_lines=50)
+    assert cases == []
+    assert skipped == [Skip("bugsinpy/demo/1", "non-utf8-diff")]

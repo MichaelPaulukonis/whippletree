@@ -44,7 +44,7 @@ The BugsInPy cache lives in `~/.cache/whippletree/bugsinpy/`; delete it to rebui
 
 - Layout: BugsInPy metadata (shallow, never refreshed on purpose, for reproducibility; delete to refresh), blobless full-history project clones under `repos/`, one detached worktree per case at the buggy commit under `checkouts/`.
 - The first run needs network. Warm the cache with one run (e.g. the baseline) before running several models in parallel; concurrent cold-cache runs can clobber each other's clones.
-- Load-time skips are printed to stderr and recorded in the trace header; `report` shows a `skipped at load:` line. On a cold cache, `commit-missing` skips can mean the network was down, not that the dataset is wrong.
+- Load-time skips are printed to stderr and recorded in the trace header; `report` shows a `skipped at load:` line. On a cold cache, `clone-failed` / `git-error` skips can mean the network was down; `commit-missing` means the buggy commit isn't reachable in the clone.
 - Default projects (small repos): PySnooper, cookiecutter, httpie, sanic, tqdm, thefuck. `--case bugsinpy/<project>/<n>` works for any BugsInPy project.
 
 Traces go to `runs/<run-id>.jsonl` (gitignored). Curated results go in `results/`.
