@@ -217,13 +217,17 @@ def ensure_clone(url: str, dest: Path, *extra: str) -> Path:
     if (dest / ".git").exists():
         return dest
     shutil.rmtree(dest, ignore_errors=True)
+    # Clone beside dest and rename on success, so a killed clone never leaves a reusable dest/.git.
+    tmp = dest.with_name(dest.name + ".tmp")
+    shutil.rmtree(tmp, ignore_errors=True)
     dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"whippletree: cloning {url}", file=sys.stderr)
     try:
-        _git(dest.parent, "clone", "-q", *extra, url, str(dest))
+        _git(dest.parent, "clone", "-q", *extra, url, str(tmp))
     except GitError:
-        shutil.rmtree(dest, ignore_errors=True)
+        shutil.rmtree(tmp, ignore_errors=True)
         raise
+    tmp.rename(dest)
     return dest
 
 
@@ -292,21 +296,23 @@ def load_bugsinpy(cache: Path = CACHE, projects: tuple[str, ...] = DEFAULT_PROJE
     except GitError as e:
         raise WhippletreeError(f"could not fetch BugsInPy metadata: {e}") from e
 
-    wanted: tuple[str, str] | None = None
+    wanted_bug: str | None = None
     if case_id is not None:
         parts = case_id.split("/")
         if len(parts) != 3 or parts[0] != "bugsinpy":
             return [], []
-        wanted = (parts[1], parts[2])
+        wanted_bug = parts[2]
         projects = (parts[1],)
 
     cases: list[Case] = []
     skipped: list[Skip] = []
+    if limit is not None and limit <= 0:
+        return cases, skipped
     for project in projects:
         project_dir = meta / "projects" / project
         numbers = _bug_numbers(project_dir)
-        if wanted is not None:
-            numbers = [n for n in numbers if n == wanted[1]]
+        if wanted_bug is not None:
+            numbers = [n for n in numbers if n == wanted_bug]
         if not numbers:
             continue
         try:
@@ -316,13 +322,13 @@ def load_bugsinpy(cache: Path = CACHE, projects: tuple[str, ...] = DEFAULT_PROJE
             skipped.extend(Skip(f"bugsinpy/{project}/{n}", "clone-failed") for n in numbers)
             continue
         for n in numbers:
-            if limit is not None and len(cases) >= limit:
-                return cases, skipped
             cid = f"bugsinpy/{project}/{n}"
             try:
                 cases.append(build_case(cid, repo, project_dir / "bugs" / n,
                                         cache / "checkouts" / f"{project}-{n}",
                                         min_lines, max_lines))
+                if limit is not None and len(cases) >= limit:
+                    return cases, skipped
             except SkipCase as e:
                 skipped.append(Skip(cid, str(e)))
             except GitError as e:

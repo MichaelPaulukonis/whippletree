@@ -110,3 +110,17 @@ def test_patch_that_does_not_fit_buggy_is_skipped(tmp_path):
                    "@@ -1 +1 @@\n-nothing like this\n+here\n")
     _, _, skipped = _load(tmp_path, {"1": (None, other_patch)})
     assert skipped == [Skip("bugsinpy/demo/1", "patch-does-not-apply-to-buggy")]
+
+
+def test_limit_does_not_clone_next_project(tmp_path):
+    s = padded_history(tmp_path / "upstream")
+    meta = _metadata(tmp_path, str(tmp_path / "upstream"), {"1": (s["B"], s["patch"])})
+    commit(meta, {"projects/demo2/project.info": f'github_url="{tmp_path / "other"}"',
+                  "projects/demo2/bugs/1/bug.info": f'buggy_commit_id="{s["B"]}"',
+                  "projects/demo2/bugs/1/bug_patch.txt": s["patch"]})
+    cache = tmp_path / "cache"
+    cases, skipped = load_bugsinpy(cache=cache, projects=("demo", "demo2"),
+                                   metadata_url=str(meta), min_lines=50, limit=1)
+    assert [c.id for c in cases] == ["bugsinpy/demo/1"]
+    assert skipped == []
+    assert not (cache / "repos" / "demo2").exists()
