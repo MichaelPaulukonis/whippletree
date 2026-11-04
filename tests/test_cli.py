@@ -292,3 +292,41 @@ def test_report_corrupt_middle_line_is_clean_error(tmp_path, capsys):
     assert cli.main(["report", "c1", "--runs-dir", str(runs)]) == 2
     err = capsys.readouterr().err
     assert err.startswith("whippletree: ") and "c1.jsonl" in err and "line 2" in err
+
+
+def test_bugsinpy_skips_reach_header_and_report(tmp_path, capsys, monkeypatch):
+    from whippletree.datasets.bugsinpy import Skip
+    fake = [replace(c, id=c.id.replace("seeded", "bugsinpy"), dataset="bugsinpy")
+            for c in load_seeded()]
+    skips = [Skip("bugsinpy/demo/7", "patch-touches-tests"),
+             Skip("bugsinpy/demo/8", "git-error: git diff: boom"),
+             Skip("bugsinpy/demo/9", "git-error: git apply: bang")]
+    monkeypatch.setattr(cli, "load_bugsinpy", lambda **kw: (fake, skips))
+    runs = str(tmp_path / "runs")
+    assert cli.main(["run", "baseline", "--dataset", "bugsinpy", "--runs-dir", runs]) == 0
+    captured = capsys.readouterr()
+    run_id = captured.out.strip().splitlines()[-1]
+    assert "skipped 3 bugsinpy cases" in captured.err
+    header = read_trace(tmp_path / "runs" / f"{run_id}.jsonl")[0]
+    assert header["skipped"][0] == {"id": "bugsinpy/demo/7", "reason": "patch-touches-tests"}
+    cli.main(["report", run_id, "--runs-dir", runs])
+    out = capsys.readouterr().out
+    assert "skipped at load: 3 (git-error 2, patch-touches-tests 1)" in out
+    assert "cases 2 scored" in out
+
+
+def test_bugsinpy_passes_limit_and_case_through(tmp_path, capsys, monkeypatch):
+    seen = {}
+    fake = [replace(load_seeded()[0], id="bugsinpy/demo/1", dataset="bugsinpy")]
+    monkeypatch.setattr(cli, "load_bugsinpy", lambda **kw: (seen.update(kw) or (fake, [])))
+    runs = str(tmp_path / "runs")
+    cli.main(["run", "baseline", "--dataset", "bugsinpy", "--limit", "5", "--runs-dir", runs])
+    assert seen == {"case_id": None, "limit": 5}
+
+
+def test_seeded_run_has_no_skip_line(tmp_path, capsys):
+    runs = str(tmp_path / "runs")
+    cli.main(["run", "baseline", "--dataset", "seeded", "--runs-dir", runs])
+    run_id = _run_id(capsys)
+    cli.main(["report", run_id, "--runs-dir", runs])
+    assert "skipped at load" not in capsys.readouterr().out
