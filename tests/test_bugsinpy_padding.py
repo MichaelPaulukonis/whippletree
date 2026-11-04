@@ -2,8 +2,8 @@
 
 import pytest
 
-from tests.gitrepo import commit, init_repo, lines, padded_history
-from whippletree.datasets.bugsinpy import SkipCase, changed_lines, pick_base
+from tests.gitrepo import commit, git, init_repo, lines, padded_history
+from whippletree.datasets.bugsinpy import SkipCase, _git, changed_lines, pick_base
 
 
 def test_changed_lines_counts_adds_and_deletes(tmp_path):
@@ -62,3 +62,11 @@ def test_root_commit_has_no_history(tmp_path):
     b = commit(repo, {"app.py": "a\n"})
     with pytest.raises(SkipCase, match="no-history"):
         pick_base(repo, b)
+
+
+def test_git_tolerates_non_utf8_content(tmp_path):
+    repo = init_repo(tmp_path / "r")
+    (repo / "l.py").write_bytes("x = 'caf\xe9'\n".encode("latin-1"))
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "latin1")
+    assert isinstance(_git(repo, "show", "HEAD:l.py"), str)

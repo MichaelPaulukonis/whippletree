@@ -17,7 +17,7 @@ MIN_LINES, MAX_LINES, MAX_WALK = 80, 250, 50
 
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,(\d+))? @@")
 _TEST_PATH = re.compile(r"(^|/)(tests?|testing)/|(^|/)test_[^/]*$|_test\.py$")
-# The user's git config must not change the diff.
+# Belt and braces: _git already isolates user config; these pin the diff format regardless.
 _DIFF_FLAGS = ("--no-color", "--no-ext-diff", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/")
 
 
@@ -105,9 +105,12 @@ def touches_tests(patch: str) -> bool:
 
 def _git(repo: Path, *args: str, input: str | None = None, env: dict[str, str] | None = None) -> str:
     """Run git in repo, return stdout; raise GitError(f"git {args[0]}: {stderr}") on nonzero exit."""
+    base_env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_TERMINAL_PROMPT": "0", **(env or {})}
     proc = subprocess.run(
         ["git", "-c", "core.quotePath=false", *args], cwd=repo, input=input,
-        capture_output=True, text=True, env={**os.environ, **env} if env else None,
+        stdin=subprocess.DEVNULL if input is None else None,
+        capture_output=True, encoding="utf-8", errors="surrogateescape", env=base_env,
     )
     if proc.returncode != 0:
         raise GitError(f"git {args[0]}: {proc.stderr.strip()}")
