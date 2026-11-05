@@ -13,3 +13,4 @@ runs/
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+.specstory/
