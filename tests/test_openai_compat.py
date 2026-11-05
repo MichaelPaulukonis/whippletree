@@ -5,6 +5,7 @@ import openai
 import pytest
 from openai.types.chat import ChatCompletion
 
+from whippletree.providers import openai_compat
 from whippletree.providers.base import ProviderError, ToolCall, TransientError, Usage
 from whippletree.providers.openai_compat import OpenAICompatProvider, parse_response
 
@@ -140,8 +141,41 @@ def test_complete_returns_parsed_response():
 
 def test_openrouter_without_key_fails_clearly(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(openai_compat, "keychain_key", lambda service: None)
     with pytest.raises(ProviderError, match="OPENROUTER_API_KEY"):
         OpenAICompatProvider("openrouter")
+
+
+def test_openrouter_key_falls_back_to_keychain(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("WHIPPLETREE_KEYCHAIN_SERVICE", raising=False)
+    asked = []
+    monkeypatch.setattr(openai_compat, "keychain_key", lambda s: asked.append(s) or "sk-kc")
+    p = OpenAICompatProvider("openrouter")
+    assert p.client.api_key == "sk-kc"
+    assert asked == [openai_compat.KEYCHAIN_SERVICE]
+
+
+def test_keychain_service_overridable(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("WHIPPLETREE_KEYCHAIN_SERVICE", "other-svc")
+    asked = []
+    monkeypatch.setattr(openai_compat, "keychain_key", lambda s: asked.append(s) or "sk-kc")
+    OpenAICompatProvider("openrouter")
+    assert asked == ["other-svc"]
+
+
+def test_env_key_wins_over_keychain(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-env")
+    monkeypatch.setattr(openai_compat, "keychain_key", lambda s: pytest.fail("keychain consulted"))
+    assert OpenAICompatProvider("openrouter").client.api_key == "sk-env"
+
+
+def test_keychain_key_none_when_lookup_fails(monkeypatch):
+    def boom(*a, **k):
+        raise FileNotFoundError("security")
+    monkeypatch.setattr(openai_compat.subprocess, "run", boom)
+    assert openai_compat.keychain_key("svc") is None
 
 
 def _payload(**overrides):

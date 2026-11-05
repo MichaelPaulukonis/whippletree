@@ -153,6 +153,7 @@ def test_bogus_model_is_clean_error(tmp_path, capsys):
 def test_missing_api_key_is_clean_error(tmp_path, capsys, monkeypatch):
     monkeypatch.chdir(tmp_path)  # so load_dotenv can't find a .env
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr("whippletree.providers.openai_compat.keychain_key", lambda s: None)
     argv = ["run", "review", "--dataset", "seeded", "--model", "openrouter:x/y",
             "--runs-dir", str(tmp_path / "runs")]
     assert cli.main(argv) == 2

@@ -20,7 +20,7 @@ A whippletree is the crossbar that balances the pull between several horses hitc
 
 - Python 3.13 and [uv](https://docs.astral.sh/uv/).
 - For local runs: [Ollama](https://ollama.com) running, then `ollama pull llama3.1:8b`.
-- For hosted models: an [OpenRouter](https://openrouter.ai) API key in `.env`.
+- For hosted models: an [OpenRouter](https://openrouter.ai) API key in `.env`, or in the macOS Keychain as a generic password for your user under service `orak-traction-dev` (override with `WHIPPLETREE_KEYCHAIN_SERVICE`). The env var wins if both are set.
 - Run from a source checkout: the seeded cases live in the repo's `datasets/` directory, not in the installed package.
 
 ## Run it
