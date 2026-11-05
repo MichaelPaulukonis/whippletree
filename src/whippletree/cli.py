@@ -12,6 +12,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from whippletree import __version__
+from whippletree.datasets.bugsinpy import load_bugsinpy
 from whippletree.datasets.seeded import load_seeded
 from whippletree.errors import WhippletreeError
 from whippletree.loop import Limits
@@ -28,7 +29,7 @@ from whippletree.scoring import (
 )
 from whippletree.traces import TraceWriter, new_run_id, read_trace
 
-DATASETS = ("seeded",)
+DATASETS = ("bugsinpy", "seeded")
 SETTINGS = {"temperature": 0}
 
 
@@ -89,26 +90,32 @@ def positive_int(text: str) -> int:
 
 
 def load_cases(dataset: str, case_id: str | None, limit: int | None):
+    """Return (cases, skipped); only bugsinpy can skip cases at load."""
+    if dataset == "bugsinpy":
+        return load_bugsinpy(case_id=case_id, limit=limit)
     cases = load_seeded() if dataset == "seeded" else []
     if case_id:
         cases = [c for c in cases if c.id == case_id]
-    return cases[:limit] if limit is not None else cases
+    return (cases[:limit] if limit is not None else cases), []
 
 
 def select_cases(args, case_id: str | None):
-    cases = load_cases(args.dataset, case_id, args.limit)
+    cases, skipped = load_cases(args.dataset, case_id, args.limit)
+    if skipped:
+        print(f"whippletree: skipped {len(skipped)} {args.dataset} cases at load "
+              f"(reasons in the trace header)", file=sys.stderr)
     if not cases:
         raise WhippletreeError(f"no cases match dataset={args.dataset} case={case_id} "
                          f"limit={args.limit}")
-    return cases
+    return cases, skipped
 
 
-def _base_header(args, cases, case_id: str | None) -> dict:
+def _base_header(args, cases, case_id: str | None, skipped) -> dict:
     return dict(
         dataset=args.dataset, git_sha=git_sha(), git_dirty=git_dirty(), version=__version__,
         argv=args.argv, case_filter=case_id, limit=args.limit,
         dataset_hash=dataset_hash(cases), window=DEFAULT_WINDOW,
-        thresholds=DEFAULT_THRESHOLDS,
+        thresholds=DEFAULT_THRESHOLDS, skipped=[asdict(s) for s in skipped],
     )
 
 
@@ -117,7 +124,7 @@ def _trace_path(runs_dir: str, run_id: str) -> Path:
 
 
 def cmd_review(args) -> int:
-    cases = select_cases(args, args.case)
+    cases, skipped = select_cases(args, args.case)
     routing = args.routing.split(",") if args.routing else None
     provider = make_provider(args.model, routing)
     limits = Limits()
@@ -126,7 +133,7 @@ def cmd_review(args) -> int:
         trace.write("header", run_id=run_id, mode="review", model=args.model,
                     limits=limits, settings=SETTINGS, routing=routing, repeat=args.repeat,
                     system_prompt_sha=hashlib.sha256(build_system_prompt(limits).encode()).hexdigest(),
-                    **_base_header(args, cases, args.case))
+                    **_base_header(args, cases, args.case, skipped))
         records = run_review(cases, args.model, provider, trace, limits=limits,
                              settings=SETTINGS, repeat=args.repeat)
         trace.write("end", cases=len(records))
@@ -135,11 +142,11 @@ def cmd_review(args) -> int:
 
 
 def cmd_baseline(args) -> int:
-    cases = select_cases(args, None)
+    cases, skipped = select_cases(args, None)
     run_id = new_run_id()
     with TraceWriter(_trace_path(args.runs_dir, run_id)) as trace:
         trace.write("header", run_id=run_id, mode="baseline", model=f"baseline:{args.strategy}",
-                    k=args.k, seed=args.seed, **_base_header(args, cases, None))
+                    k=args.k, seed=args.seed, **_base_header(args, cases, None, skipped))
         records = run_baseline(cases, args.k, random.Random(args.seed), trace)
         trace.write("end", cases=len(records))
     print(run_id)
@@ -185,6 +192,10 @@ def format_metrics(run_id: str, header: dict, m: RunMetrics, served_by: list[str
         spread = _num(max(defined) - min(defined)) if defined else "-"
         lines.append(f"  recall per repeat: {', '.join(_num(x) for x in per)} "
                      f"(spread {spread})")
+    if header.get("skipped"):
+        reasons = Counter(s["reason"].split(":", 1)[0] for s in header["skipped"])
+        lines.append(f"  skipped at load: {len(header['skipped'])} "
+                     f"({', '.join(f'{k} {n}' for k, n in sorted(reasons.items()))})")
     if len(served_by) > 1:
         lines.append("  WARNING: served by more than one backend; numbers mix providers")
     if header.get("git_dirty"):

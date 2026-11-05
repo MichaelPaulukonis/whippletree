@@ -4,7 +4,9 @@ The SDK's own retries are off (max_retries=0) so the loop does retries and can
 count them.
 """
 
+import getpass
 import os
+import subprocess
 import uuid
 
 import openai
@@ -16,6 +18,23 @@ ENDPOINTS = {
     "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
     "ollama": ("http://localhost:11434/v1", None),
 }
+
+# macOS Keychain fallback for OPENROUTER_API_KEY (whippletree-only key, own budget).
+KEYCHAIN_SERVICE = "whippletree-or-api-key"
+
+
+def keychain_key(service: str) -> str | None:
+    """Return the generic password for (current user, service), or None if absent."""
+    try:
+        r = subprocess.run(
+            ["security", "find-generic-password", "-a", getpass.getuser(), "-s", service, "-w"],
+            capture_output=True, text=True, stdin=subprocess.DEVNULL,
+        )
+    except OSError:  # no `security` binary
+        return None
+    if r.returncode != 0:
+        return None
+    return r.stdout.strip() or None
 
 
 class OpenAICompatProvider:
@@ -30,9 +49,12 @@ class OpenAICompatProvider:
             base_url, key_var = ENDPOINTS[name]
             api_key = "ollama"
             if key_var:
-                api_key = os.environ.get(key_var, "")
+                service = os.environ.get("WHIPPLETREE_KEYCHAIN_SERVICE", KEYCHAIN_SERVICE)
+                api_key = os.environ.get(key_var) or keychain_key(service)
                 if not api_key:
-                    raise ProviderError(f"{key_var} is not set (put it in .env)")
+                    raise ProviderError(
+                        f"{key_var} is not set (put it in .env) and no Keychain entry for {service!r}"
+                    )
             client = openai.OpenAI(base_url=base_url, api_key=api_key, max_retries=0)
         self.client = client
 
