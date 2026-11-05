@@ -19,8 +19,8 @@ ENDPOINTS = {
     "ollama": ("http://localhost:11434/v1", None),
 }
 
-# macOS Keychain fallback for OPENROUTER_API_KEY; shared with traction-engine.
-KEYCHAIN_SERVICE = "orak-traction-dev"
+# macOS Keychain fallback for OPENROUTER_API_KEY (whippletree-only key, own budget).
+KEYCHAIN_SERVICE = "whippletree-or-api-key"
 
 
 def keychain_key(service: str) -> str | None:
