@@ -19,7 +19,7 @@ A whippletree is the crossbar that balances the pull between several horses hitc
 ## Prerequisites
 
 - Python 3.13 and [uv](https://docs.astral.sh/uv/).
-- For local runs: [Ollama](https://ollama.com) running, then `ollama pull llama3.1:8b`.
+- For local runs: [Ollama](https://ollama.com) running, then `ollama pull llama3.1:8b`. `OLLAMA_HOST` is honored. Ollama silently drops the start of a prompt longer than its context window (16384 tokens by default on 0.40), so whippletree refuses such calls and marks the case errored; BugsInPy prompts reach ~25k tokens, so start Ollama with `OLLAMA_CONTEXT_LENGTH=32768` for those runs.
 - For hosted models: an [OpenRouter](https://openrouter.ai) API key in `.env`, or in the macOS Keychain as a generic password for your user under service `whippletree-or-api-key` (override with `WHIPPLETREE_KEYCHAIN_SERVICE`). The env var wins if both are set.
 - Run from a source checkout: the seeded cases live in the repo's `datasets/` directory, not in the installed package.
 
@@ -80,6 +80,12 @@ uv run ruff check .
 - OpenRouter routing is pinned per run so a model id isn't silently served by different backends.
 - Harness-caused failures (timeouts, provider errors) are counted as errored, not as model misses, and every stop reason is reported.
 - Spec: `docs/superpowers/specs/2026-11-01-whippletree-design.md`.
+
+## Known biases
+
+- Token counts (and the token budget) use each model's own tokenizer, so the same transcript costs different "tokens" per model. Tokens/found compares spend within a model, not efficiency across models.
+- Every step resends the whole transcript, so cumulative input tokens grow roughly quadratically with step count. A model that explores more pays more per finding than its step count suggests.
+- llama3.1's Ollama chat template injects tool definitions only when the last message is from the user. After a tool result the model sees no tool schemas, so its reported input tokens can drop between steps and its tool use runs from memory. Treat llama3.1 results as a floor, not a fair comparison.
 
 ## License
 

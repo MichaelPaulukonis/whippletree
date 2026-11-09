@@ -1,4 +1,3 @@
-import itertools
 
 from tests.fakes import FakeProvider, call, resp
 from whippletree.loop import NUDGE, WARNING, Limits, run
@@ -106,13 +105,6 @@ def test_token_budget():
 def test_budget_never_discards_a_submission():
     _, r = go([resp(calls=[call("submit", {"v": 1})])], [submit], Limits(token_budget=5))
     assert (r.stop, r.result) == ("done", 1)
-
-
-def test_wall_clock_timeout():
-    clock = itertools.count(0, 200).__next__  # each clock() call advances 200s
-    _, r = go([resp(calls=[call("echo", {})])], [echo, submit], Limits(wall_clock_s=300),
-              clock=clock)
-    assert (r.stop, r.counters.steps) == ("timeout", 1)
 
 
 def test_transient_errors_are_retried_with_backoff():

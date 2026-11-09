@@ -55,7 +55,7 @@ TEXT_RESPONSE = {
 
 def test_parse_tool_call_response():
     r = parse_response(ChatCompletion.model_validate(TOOL_CALL_RESPONSE))
-    assert r.tool_calls == [ToolCall(id="call_1", name="read_file", arguments='{"path": "a.py"}')]
+    assert r.tool_calls == (ToolCall(id="call_1", name="read_file", arguments='{"path": "a.py"}'),)
     assert r.usage == Usage(input=100, output=20, cached=40)
     assert r.cost_usd == 0.0012
     assert r.served_by == "Google"
@@ -66,7 +66,7 @@ def test_parse_tool_call_response():
 def test_parse_text_response_without_cost_or_provider():
     r = parse_response(ChatCompletion.model_validate(TEXT_RESPONSE))
     assert r.text == "hi"
-    assert r.tool_calls == []
+    assert r.tool_calls == ()
     assert r.usage == Usage(input=5, output=1, cached=0)
     assert r.cost_usd is None
     assert r.served_by is None
@@ -227,9 +227,9 @@ def test_tool_call_without_type_is_kept():
     # the SDK models require `type`, so null it after validation (as lenient backends send it)
     raw = ChatCompletion.model_validate(TOOL_CALL_RESPONSE)
     raw.choices[0].message.tool_calls[0].type = None
-    assert parse_response(raw).tool_calls == [
-        ToolCall(id="call_1", name="read_file", arguments='{"path": "a.py"}')
-    ]
+    assert parse_response(raw).tool_calls == (
+        ToolCall(id="call_1", name="read_file", arguments='{"path": "a.py"}'),
+    )
 
 
 def test_tool_call_of_other_type_is_surfaced():
@@ -304,3 +304,56 @@ def test_extra_body_setting_kept_on_ollama():
     p = OpenAICompatProvider("ollama", client=object())
     req = p.build_request([], [], "m", {"extra_body": {"top_k": 5}})
     assert req["extra_body"] == {"top_k": 5}
+
+
+# Ollama silently drops the front of an over-long prompt (system prompt included) and reports
+# only the tokens it kept, so the guard has to run before the call.
+
+def _ollama(ctx, completions):
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    lookups = []
+
+    def lookup(model):
+        lookups.append(model)
+        return ctx
+
+    return OpenAICompatProvider("ollama", client=client, context_lookup=lookup), lookups
+
+
+def test_ollama_prompt_too_big_for_context_is_refused_before_sending():
+    comps = FakeCompletions(resp=ChatCompletion.model_validate(TEXT_RESPONSE))
+    p, _ = _ollama(100, comps)
+    with pytest.raises(ProviderError, match="OLLAMA_CONTEXT_LENGTH") as ei:
+        p.complete([{"role": "user", "content": "x" * 400}], [], "m", {})
+    assert not isinstance(ei.value, TransientError)
+    assert comps.kwargs is None  # never sent
+
+
+def test_ollama_prompt_that_fits_is_sent_and_context_looked_up_once():
+    comps = FakeCompletions(resp=ChatCompletion.model_validate(TEXT_RESPONSE))
+    p, lookups = _ollama(10_000, comps)
+    p.complete([{"role": "user", "content": "hi"}], [], "m", {})
+    p.complete([{"role": "user", "content": "hi"}], [], "m", {})
+    assert comps.kwargs is not None
+    assert lookups == ["m"]
+
+
+def test_ollama_unknown_context_skips_the_guard():
+    comps = FakeCompletions(resp=ChatCompletion.model_validate(TEXT_RESPONSE))
+    p, _ = _ollama(None, comps)
+    p.complete([{"role": "user", "content": "x" * 100_000}], [], "m", {})
+    assert comps.kwargs is not None
+
+
+@pytest.mark.parametrize("env, expected", [
+    (None, "http://localhost:11434"),
+    ("box:1234", "http://box:1234"),
+    ("0.0.0.0", "http://0.0.0.0:11434"),
+    ("https://box.lan:8443/", "https://box.lan:8443"),
+])
+def test_ollama_host_env(monkeypatch, env, expected):
+    if env is None:
+        monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    else:
+        monkeypatch.setenv("OLLAMA_HOST", env)
+    assert openai_compat.ollama_host() == expected

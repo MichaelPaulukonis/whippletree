@@ -5,19 +5,60 @@ count them.
 """
 
 import getpass
+import json
 import os
 import subprocess
+import sys
+import urllib.request
 import uuid
+from collections.abc import Callable
+from urllib.parse import urlsplit
 
 import openai
 
 from whippletree.providers.base import ProviderError, Response, ToolCall, TransientError, Usage
 
-# name -> (base_url, env var holding the API key; None means no key needed)
+# name -> (base_url, env var holding the API key; None means no key needed).
+# Ollama's base_url is None here: it comes from OLLAMA_HOST at construction time.
 ENDPOINTS = {
     "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
-    "ollama": ("http://localhost:11434/v1", None),
+    "ollama": (None, None),
 }
+
+# Rough prompt-size estimate for the Ollama context guard. Real ratios run ~4-5 chars/token
+# for English and ~3 for code/JSON, so 3 errs toward refusing rather than truncating.
+CHARS_PER_TOKEN = 3
+
+
+def ollama_host() -> str:
+    """OLLAMA_HOST as the Ollama CLI reads it: scheme and port optional."""
+    host = os.environ.get("OLLAMA_HOST") or "localhost:11434"
+    if "://" not in host:
+        host = "http://" + host
+    host = host.rstrip("/")
+    if urlsplit(host).port is None:
+        host += ":11434"
+    return host
+
+
+def ollama_context_length(model: str, host: str | None = None) -> int | None:
+    """The context window Ollama will actually run `model` with (not its trained maximum).
+
+    Loads the model first (an empty generate does that), then reads /api/ps. None on failure.
+    """
+    host = host or ollama_host()
+    try:
+        load = urllib.request.Request(f"{host}/api/generate", json.dumps({"model": model}).encode(),
+                                      {"Content-Type": "application/json"})
+        urllib.request.urlopen(load, timeout=120).read()
+        with urllib.request.urlopen(f"{host}/api/ps", timeout=10) as r:
+            running = json.load(r).get("models", [])
+    except (OSError, ValueError):
+        return None
+    for m in running:
+        if model in (m.get("name"), m.get("model")):
+            return m.get("context_length")
+    return None
 
 # macOS Keychain fallback for OPENROUTER_API_KEY (whippletree-only key, own budget).
 KEYCHAIN_SERVICE = "whippletree-or-api-key"
@@ -40,13 +81,21 @@ def keychain_key(service: str) -> str | None:
 class OpenAICompatProvider:
     """Chat-completions provider for OpenRouter and Ollama via the openai SDK."""
 
-    def __init__(self, name: str, client=None, routing: list[str] | None = None):
+    def __init__(self, name: str, client=None, routing: list[str] | None = None,
+                 context_lookup: Callable[[str], int | None] | None = None):
         if name not in ENDPOINTS:
             raise ProviderError(f"unknown provider {name!r}")
         self.name = name
         self.routing = routing
+        # Only Ollama truncates silently; a real client gets the real lookup by default.
+        if context_lookup is None and name == "ollama" and client is None:
+            context_lookup = ollama_context_length
+        self.context_lookup = context_lookup
+        self._context: dict[str, int | None] = {}
         if client is None:
             base_url, key_var = ENDPOINTS[name]
+            if name == "ollama":
+                base_url = ollama_host() + "/v1"
             api_key = "ollama"
             if key_var:
                 service = os.environ.get("WHIPPLETREE_KEYCHAIN_SERVICE", KEYCHAIN_SERVICE)
@@ -73,7 +122,26 @@ class OpenAICompatProvider:
             req["extra_body"] = extra
         return req
 
+    def _check_context(self, messages, tools, model) -> None:
+        if self.context_lookup is None:
+            return
+        if model not in self._context:
+            self._context[model] = self.context_lookup(model)
+            if self._context[model] is None:
+                print(f"warning: could not read Ollama context length for {model}; "
+                      f"prompt truncation will go undetected", file=sys.stderr)
+        ctx = self._context[model]
+        if ctx is None:
+            return
+        estimate = (len(json.dumps(messages)) + len(json.dumps(tools))) // CHARS_PER_TOKEN
+        if estimate > ctx:
+            raise ProviderError(
+                f"prompt (~{estimate} tokens est.) exceeds Ollama context ({ctx}); Ollama would "
+                f"silently drop its start. Restart Ollama with a larger OLLAMA_CONTEXT_LENGTH."
+            )
+
     def complete(self, messages, tools, model, settings) -> Response:
+        self._check_context(messages, tools, model)
         req = self.build_request(messages, tools, model, settings)
         try:
             raw = self.client.chat.completions.create(**req)
@@ -145,7 +213,7 @@ def parse_response(raw) -> Response:
         cost = (u.model_extra or {}).get("cost")  # OpenRouter usage accounting
     return Response(
         text=msg.content or "",
-        tool_calls=calls,
+        tool_calls=tuple(calls),
         usage=usage,
         stop_reason=choice.finish_reason or "unknown",
         cost_usd=cost,

@@ -23,7 +23,7 @@ class FakeProvider:
 def resp(text="", calls=(), inp=10, out=5, cost=None, served_by=None, stop=None, extra=None):
     return Response(
         text=text,
-        tool_calls=list(calls),
+        tool_calls=tuple(calls),
         usage=Usage(input=inp, output=out),
         stop_reason=stop or ("tool_calls" if calls else "stop"),
         cost_usd=cost,

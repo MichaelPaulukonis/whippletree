@@ -28,7 +28,7 @@ class Usage:
 @dataclass(frozen=True)
 class Response:
     text: str
-    tool_calls: list[ToolCall]
+    tool_calls: tuple[ToolCall, ...]
     usage: Usage
     stop_reason: str
     cost_usd: float | None = None
