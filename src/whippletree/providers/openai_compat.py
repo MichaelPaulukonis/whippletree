@@ -81,11 +81,20 @@ class OpenAICompatProvider:
             raise TransientError(str(e)) from e
         except openai.APIStatusError as e:
             if _is_transient_code(e.status_code):
-                raise TransientError(str(e)) from e
+                raise TransientError(str(e), retry_after=_retry_after(e.response)) from e
             raise ProviderError(str(e)) from e
         except openai.APIError as e:
             raise ProviderError(str(e)) from e
         return parse_response(raw)
+
+
+def _retry_after(response) -> float | None:
+    """Retry-After in seconds. The HTTP-date form is ignored (None): rare, and backoff covers it."""
+    try:
+        value = float(response.headers.get("retry-after"))
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
 
 
 def _is_transient_code(code) -> bool:

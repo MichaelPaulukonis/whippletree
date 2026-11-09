@@ -108,9 +108,10 @@ def _provider(completions):
     return OpenAICompatProvider("ollama", client=client)
 
 
-def _status_error(cls, code):
+def _status_error(cls, code, headers=None):
     request = httpx2.Request("POST", "https://example.test")
-    return cls("boom", response=httpx2.Response(code, request=request), body=None)
+    return cls("boom", response=httpx2.Response(code, request=request, headers=headers),
+               body=None)
 
 
 @pytest.mark.parametrize(
@@ -124,6 +125,17 @@ def _status_error(cls, code):
 def test_retryable_failures_are_transient(exc):
     with pytest.raises(TransientError):
         _provider(FakeCompletions(exc=exc)).complete([], [], "m", {})
+
+
+@pytest.mark.parametrize("value, expected", [("7", 7.0), ("2.5", 2.5), (None, None),
+                                             ("Wed, 21 Oct 2026 07:28:00 GMT", None),
+                                             ("-3", None)])
+def test_retry_after_header_rides_on_transient_error(value, expected):
+    headers = {"retry-after": value} if value is not None else None
+    exc = _status_error(openai.RateLimitError, 429, headers)
+    with pytest.raises(TransientError) as ei:
+        _provider(FakeCompletions(exc=exc)).complete([], [], "m", {})
+    assert ei.value.retry_after == expected
 
 
 def test_bad_request_is_permanent():

@@ -5,6 +5,7 @@ execute. Messages use the OpenAI chat format.
 """
 
 import json
+import random
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -18,6 +19,12 @@ NUDGE = "You have not submitted. Call {tool} to complete your task."
 WARNING = "Limit almost reached: call {tool} now with what you have."
 WARN_AT_BUDGET_SHARE = 0.8
 NOT_RUN = "not run: time limit reached"
+
+# Retry waits: 2, 4, 8s... A longer Retry-After wins, up to the cap. Jitter (up to +25%)
+# keeps parallel runs against one endpoint from retrying in lockstep.
+BACKOFF_BASE_S = 2.0
+RETRY_CAP_S = 60.0
+JITTER_SHARE = 0.25
 
 _NOTHING = object()
 
@@ -70,6 +77,7 @@ def run(
     on_call: Callable[[dict], None] | None = None,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
+    jitter: Callable[[], float] = random.random,
 ) -> LoopResult:
     limits = limits or Limits()
     transcript = list(messages)
@@ -110,7 +118,7 @@ def run(
         t0 = clock()
         try:
             resp = _call_with_retry(provider, transcript, schemas, model, settings or {}, limits,
-                                    c, timed_sleep)
+                                    c, timed_sleep, jitter)
         except ProviderError as e:
             return finish("error", error=str(e))
         now = clock()
@@ -171,7 +179,8 @@ def run(
             return finish("timeout")
 
 
-def _call_with_retry(provider, transcript, schemas, model, settings, limits, c, sleep) -> Response:
+def _call_with_retry(provider, transcript, schemas, model, settings, limits, c, sleep,
+                     jitter) -> Response:
     for attempt in range(limits.max_retries + 1):
         try:
             return provider.complete(transcript, schemas, model, settings)
@@ -179,8 +188,12 @@ def _call_with_retry(provider, transcript, schemas, model, settings, limits, c, 
             if attempt == limits.max_retries:
                 raise ProviderError(f"gave up after {attempt} retries: {e}") from e
             c.retries += 1
-            sleep(2**attempt)
+            sleep(_retry_delay(attempt, e.retry_after) * (1 + JITTER_SHARE * jitter()))
     raise AssertionError("unreachable")
+
+
+def _retry_delay(attempt: int, retry_after: float | None) -> float:
+    return min(max(BACKOFF_BASE_S * 2**attempt, retry_after or 0.0), RETRY_CAP_S)
 
 
 def _account(c: Counters, resp: Response) -> None:

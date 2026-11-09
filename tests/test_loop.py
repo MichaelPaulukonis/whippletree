@@ -27,6 +27,7 @@ def _filled(template, tool="submit"):
 def go(script, tools, limits=None, **kw):
     provider = FakeProvider(script)
     kw.setdefault("sleep", lambda s: None)
+    kw.setdefault("jitter", lambda: 0.0)
     return provider, run(provider, "m", MSGS, tools, limits=limits, **kw)
 
 
@@ -120,7 +121,21 @@ def test_transient_errors_are_retried_with_backoff():
               sleep=sleeps.append)
     assert (r.stop, r.result) == ("done", "ok")
     assert r.counters.retries == 2
-    assert sleeps == [1, 2]
+    assert sleeps == [2, 4]
+
+
+def test_retry_after_is_honored_and_capped():
+    sleeps = []
+    _, r = go([TransientError("429", retry_after=30), TransientError("429", retry_after=1),
+               TransientError("429", retry_after=999), resp("ok")], [echo], sleep=sleeps.append)
+    assert r.stop == "done"
+    assert sleeps == [30, 4, 60]  # Retry-After wins when longer, never shortens backoff, capped
+
+
+def test_jitter_stretches_each_wait():
+    sleeps = []
+    go([TransientError("503"), resp("ok")], [echo], sleep=sleeps.append, jitter=lambda: 1.0)
+    assert sleeps == [2 * 1.25]
 
 
 def test_retries_exhausted_is_error():
@@ -225,7 +240,7 @@ def test_retry_backoff_does_not_count_toward_wall_clock():
     script = [TransientError("x")] * 3 + [resp(calls=[call("echo", {})]),
                                           resp(calls=[call("submit", {"v": 1})])]
     _, r = go(script, [echo, submit], Limits(wall_clock_s=5), clock=clock, sleep=clock.sleep)
-    assert clock.t == 7  # slept 1 + 2 + 4
+    assert clock.t == 14  # slept 2 + 4 + 8
     assert (r.stop, r.result) == ("done", 1)
 
 

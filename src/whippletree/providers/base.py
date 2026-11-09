@@ -42,7 +42,14 @@ class ProviderError(Exception):
 
 
 class TransientError(Exception):
-    """Rate limit, server error, or network failure: worth retrying."""
+    """Rate limit, server error, or network failure: worth retrying.
+
+    retry_after is the server's Retry-After in seconds, when it sent a usable one.
+    """
+
+    def __init__(self, message: str = "", retry_after: float | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class Provider(Protocol):
