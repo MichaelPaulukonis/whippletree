@@ -2,7 +2,8 @@
 
 Date: 2026-11-01
 Status: approved in brainstorm, pending written-spec review
-Scope of this spec: **Milestone 1, v0** (read-only review benchmark). Later phases are listed for context only and get their own specs.
+Scope of this spec: **Milestone 1, v0** (read-only review benchmark).
+Revised 2026-11-10: roadmap trimmed to finish on the read-only benchmark. The verifier, native adapters and the phase 2 pipeline are cut (see Roadmap).
 
 A whippletree is the crossbar that balances the pull between several horses hitched to one load. Here the horses are models.
 
@@ -12,27 +13,33 @@ Whippletree is a public, self-built Python coding-agent harness. It exists to le
 
 ### Goal once measured
 
-1. **Primary success criterion:** choose a personal code-review policy on evidence - "Claude writes; reviewer X at confidence >= T reviews; costs $Y per PR; catches Z% of bugs." The winning setup is then wired into daily work as a Claude Code skill.
-2. A public repo plus one write-up with charts. Honest failures included.
+1. **Primary deliverable:** a public repo plus one write-up with charts. Honest failures included. (Reordered 2026-11-10: the project is a portfolio and evals-evidence piece first.)
+2. The write-up's conclusion is a code-review policy chosen on evidence - "Claude writes; reviewer X at confidence >= T reviews; costs $Y per PR; catches Z% of bugs." The winning setup is then wired into daily work as a Claude Code skill.
 3. Firsthand stories of how harnesses break (tool-call flakiness, routing drift, budget cutoffs).
 
 ### Hypotheses
 
-- **H1:** a cheap model plus a verifier reaches >= 80% of Opus's recall at <= 20% of its cost. (Needs phase 1b, the verifier.)
-- **H2:** cross-model review catches bugs that self-review misses. Not testable in M1 (BugsInPy bugs are human-written); needs M2 or a collected set of real Claude-made bugs.
-- **H3:** native provider adapters cut cost >= X% vs OpenRouter (prompt caching). X is set after the phase 1a OpenRouter baseline.
+- **H1:** a cheap model plus a verifier reaches >= 80% of Opus's recall at <= 20% of its cost. **Trimmed 2026-11-10:** tested without the verifier - how close does a cheap read-only reviewer get to Opus's recall, and at what share of the cost.
+- **H2:** cross-model review catches bugs that self-review misses. Not tested: BugsInPy bugs are human-written, and the pipeline that would produce model-written bugs is cut.
+- **H3:** native provider adapters cut cost >= X% vs OpenRouter (prompt caching). Not tested: native adapters are cut.
 
-v0 itself tests none of these directly; it produces the read-only baseline every hypothesis is compared against.
+The write-up reports H2, H3 and the verifier half of H1 as not tested, with the reason.
 
-## Roadmap (context)
+## Roadmap
 
-| Phase | What | Spec |
+Trimmed 2026-11-10. The project ends when the steps below are done.
+
+| Step | What | Bead |
 | --- | --- | --- |
-| **1a (this spec)** | Read-only reviewer, OpenRouter + Ollama, BugsInPy + seeded, scoring, traces | this doc |
-| 1b | Docker sandbox per bug, `run_tests` tool, network off (verifier) | separate |
-| 1c | Native `anthropic` + `google-genai` adapters, benchmarked vs OpenRouter | separate |
-| 2 | Coder -> test-writer -> reviewer pipeline on SWE-bench Verified subset | separate |
-| later | SZZ realism-check subset; context management / token budgets (C); safety and permissions (D); optional REPL | separate |
+| 1a (done) | Read-only reviewer, OpenRouter + Ollama, BugsInPy + seeded, scoring, traces; M1 results for two frontier models vs random | - |
+| 1 | Per-project cap on BugsInPy case selection (thefuck was 13 of 24 cases) | `whippletree-n57` |
+| 2 | 2-3 cheap models plus Opus, Gemini and the random baseline on the capped set | `whippletree-v7l` |
+| 3 | Seeded set to 5-6 cases, padded to 80-250 changed lines | `whippletree-8tb` |
+| 4 | Hand audit of FPs and TPs per model | `whippletree-ihg` |
+| 5 | Write-up with charts, README update | `whippletree-1uj` |
+| 6 | Winning setup as a Claude Code skill | `whippletree-2r0` |
+
+Cut, not planned: 1b (Docker sandbox, `run_tests` verifier), 1c (native `anthropic` + `google-genai` adapters), phase 2 (coder -> test-writer -> reviewer on SWE-bench Verified), SZZ realism subset, context management, safety and permissions, REPL. Notes on 1b and phase 2 further down are kept as design history.
 
 ## Decisions
 
@@ -40,7 +47,7 @@ v0 itself tests none of these directly; it produces the read-only baseline every
 - **Mode:** headless task runner. No REPL in v0.
 - **Providers (1a):** everything through the `openai` SDK - OpenRouter (`https://openrouter.ai/api/v1`) and Ollama (`http://localhost:11434/v1`). No LiteLLM (2026 supply-chain compromises and CVEs), no Vercel AI SDK (TypeScript-only, and abstracts away the provider differences under study).
 - **Dependencies:** minimal and pinned via `uv.lock`. Runtime: `openai` only. CLI via stdlib `argparse`; data structures via `dataclasses`. Dev: `pytest`, `ruff`.
-- **Datasets:** BugsInPy for M1, plus ~10 hand-seeded bugs as a contamination-free control.
+- **Datasets:** BugsInPy for M1, plus 5-6 hand-seeded bugs as a contamination-free control (cut from ~10 on 2026-11-10).
 - **Execution:** none in v0. The reviewer reads only.
 
 ## Architecture
