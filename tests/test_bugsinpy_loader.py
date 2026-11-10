@@ -141,3 +141,25 @@ def test_non_utf8_diff_is_skipped(tmp_path):
                                    metadata_url=str(meta), min_lines=50)
     assert cases == []
     assert skipped == [Skip("bugsinpy/demo/1", "non-utf8-diff")]
+
+
+def test_per_project_cap_moves_on_to_next_project(tmp_path):
+    s = padded_history(tmp_path / "upstream")
+    bugs = {"1": (s["B"], TEST_PATCH), "2": (s["B"], s["patch"]), "3": (s["B"], s["patch"]),
+            "4": (s["B"], s["patch"])}
+    meta = _metadata(tmp_path, str(tmp_path / "upstream"), bugs)
+    commit(meta, {"projects/demo2/project.info": f'github_url="{tmp_path / "upstream"}"',
+                  "projects/demo2/bugs/1/bug.info": f'buggy_commit_id="{s["B"]}"',
+                  "projects/demo2/bugs/1/bug_patch.txt": s["patch"]})
+    cache = tmp_path / "cache"
+    cases, skipped = load_bugsinpy(cache=cache, projects=("demo", "demo2"),
+                                   metadata_url=str(meta), min_lines=50, per_project=2)
+    assert [c.id for c in cases] == ["bugsinpy/demo/2", "bugsinpy/demo/3", "bugsinpy/demo2/1"]
+    assert skipped == [Skip("bugsinpy/demo/1", "patch-touches-tests")]
+    assert not (cache / "checkouts" / "demo-4").exists()
+
+
+def test_per_project_cap_and_limit_together(tmp_path):
+    _, cases, _ = _load(tmp_path, {"1": (None, None), "2": (None, None), "3": (None, None)},
+                        per_project=2, limit=1)
+    assert [c.id for c in cases] == ["bugsinpy/demo/1"]

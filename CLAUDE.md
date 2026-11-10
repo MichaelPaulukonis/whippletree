@@ -13,8 +13,8 @@ uv run ruff check .
 uv run whippletree run baseline --dataset seeded
 uv run whippletree run review --dataset seeded --model ollama:llama3.1:8b
 uv run whippletree run review --dataset seeded --model openrouter:google/gemini-4-argon --routing google-vertex
-uv run whippletree run baseline --dataset bugsinpy --limit 24   # first run clones into ~/.cache/whippletree/bugsinpy/
-uv run whippletree run review --dataset bugsinpy --limit 24 --model openrouter:google/gemini-4-argon
+uv run whippletree run baseline --dataset bugsinpy   # first run clones into ~/.cache/whippletree/bugsinpy/
+uv run whippletree run review --dataset bugsinpy --model openrouter:google/gemini-4-argon
 uv run whippletree report <run-id> [<run-id> ...]
 ```
 
@@ -30,7 +30,7 @@ providers (`providers/`, OpenRouter and Ollama via the openai SDK) -> loop (`loo
   - BugsInPy metadata (shallow, never refreshed on purpose, for reproducibility; delete to refresh), blobless full-history project clones under `repos/`, one detached worktree per case at the buggy commit under `checkouts/`.
   - First run needs network. Warm the cache with one run (e.g. the baseline) before running several models in parallel; concurrent cold-cache runs can clobber each other's clones.
   - Load-time skips go to stderr and the trace header; `report` shows a `skipped at load:` line. On a cold cache, `clone-failed` / `git-error` skips can mean the network was down; `commit-missing` means the buggy commit isn't reachable in the clone.
-  - Default projects (small repos): PySnooper, cookiecutter, httpie, sanic, tqdm, thefuck. `--case bugsinpy/<project>/<n>` works for any BugsInPy project.
+  - Default projects: PySnooper, cookiecutter, httpie, sanic, tqdm, thefuck, black, fastapi, luigi, scrapy, tornado, youtube-dl. `--per-project` (default 4) caps cases per project, so the full default set is 39 cases with no project over ~10%; `--limit` cuts off later projects, so prefer no limit. `--case bugsinpy/<project>/<n>` works for any BugsInPy project.
 - Seeded cases: `datasets/seeded/`; raw traces: `runs/` (gitignored); curated results: `results/`
 
 ## Conventions

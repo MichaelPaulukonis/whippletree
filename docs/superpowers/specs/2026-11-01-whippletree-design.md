@@ -32,7 +32,7 @@ Trimmed 2026-11-10. The project ends when the steps below are done.
 | Step | What | Bead |
 | --- | --- | --- |
 | 1a (done) | Read-only reviewer, OpenRouter + Ollama, BugsInPy + seeded, scoring, traces; M1 results for two frontier models vs random | - |
-| 1 | Per-project cap on BugsInPy case selection (thefuck was 13 of 24 cases) | `whippletree-n57` |
+| 1 (done) | Per-project cap on BugsInPy case selection (thefuck was 13 of 24 cases): `--per-project` (default 4) plus six more default projects, 39 cases | `whippletree-n57` |
 | 2 | 2-3 cheap models plus Opus, Gemini and the random baseline on the capped set | `whippletree-v7l` |
 | 3 | Seeded set to 5-6 cases, padded to 80-250 changed lines | `whippletree-8tb` |
 | 4 | Hand audit of FPs and TPs per model | `whippletree-ihg` |
@@ -122,8 +122,8 @@ No automated matching of `claim` text against commit messages (too brittle; fix 
 
 **cli**
 
-- `whippletree run review --dataset {bugsinpy,seeded} --model <provider:model> [--limit N] [--repeat K] [--case ID]`
-- `whippletree run baseline --dataset {bugsinpy,seeded} --strategy random [--limit N]`
+- `whippletree run review --dataset {bugsinpy,seeded} --model <provider:model> [--limit N] [--per-project N] [--repeat K] [--case ID]`
+- `whippletree run baseline --dataset {bugsinpy,seeded} --strategy random [--limit N] [--per-project N]`
 - `whippletree report <run-id> [<run-id> ...]` - prints one metrics block per run (a side-by-side table is later work). Errors (unknown run id, bad model spec, missing API key, no matching cases) print a one-line `whippletree: <message>` to stderr and exit 2.
 
 ### Data flow

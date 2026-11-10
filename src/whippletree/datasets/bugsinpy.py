@@ -22,7 +22,9 @@ from whippletree.errors import WhippletreeError
 MIN_LINES, MAX_LINES, MAX_WALK = 80, 250, 50
 CACHE = Path.home() / ".cache" / "whippletree" / "bugsinpy"
 METADATA_URL = "https://github.com/soarsmu/BugsInPy.git"
-DEFAULT_PROJECTS = ("PySnooper", "cookiecutter", "httpie", "sanic", "tqdm", "thefuck")
+DEFAULT_PER_PROJECT = 4  # keeps one project from dominating a --limit run
+DEFAULT_PROJECTS = ("PySnooper", "cookiecutter", "httpie", "sanic", "tqdm", "thefuck",
+                    "black", "fastapi", "luigi", "scrapy", "tornado", "youtube-dl")
 
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,(\d+))? @@")
 _TEST_PATH = re.compile(r"(^|/)(tests?|testing)/|(^|/)test_[^/]*$|_test\.py$")
@@ -290,10 +292,12 @@ def _bug_numbers(project_dir: Path) -> list[str]:
 def load_bugsinpy(cache: Path = CACHE, projects: tuple[str, ...] = DEFAULT_PROJECTS,
                   metadata_url: str = METADATA_URL, min_lines: int = MIN_LINES,
                   max_lines: int = MAX_LINES, case_id: str | None = None,
-                  limit: int | None = None) -> tuple[list[Case], list[Skip]]:
+                  limit: int | None = None,
+                  per_project: int | None = None) -> tuple[list[Case], list[Skip]]:
     """Cases in (project, numeric bug) order, plus a Skip for each attempted case that failed.
 
-    limit: stop as soon as that many cases have built. case_id ("bugsinpy/<proj>/<n>"):
+    limit: stop as soon as that many cases have built. per_project: move on to the next
+    project once this one has built that many (later bugs are not attempted). case_id ("bugsinpy/<proj>/<n>"):
     build only that bug, from any BugsInPy project; unknown id -> ([], []).
     """
     try:
@@ -326,12 +330,16 @@ def load_bugsinpy(cache: Path = CACHE, projects: tuple[str, ...] = DEFAULT_PROJE
         except (GitError, KeyError, OSError):
             skipped.extend(Skip(f"bugsinpy/{project}/{n}", "clone-failed") for n in numbers)
             continue
+        built = 0
         for n in numbers:
+            if per_project is not None and built >= per_project:
+                break
             cid = f"bugsinpy/{project}/{n}"
             try:
                 cases.append(build_case(cid, repo, project_dir / "bugs" / n,
                                         cache / "checkouts" / f"{project}-{n}",
                                         min_lines, max_lines))
+                built += 1
                 if limit is not None and len(cases) >= limit:
                     return cases, skipped
             except SkipCase as e:

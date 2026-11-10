@@ -12,7 +12,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from whippletree import __version__
-from whippletree.datasets.bugsinpy import load_bugsinpy
+from whippletree.datasets.bugsinpy import DEFAULT_PER_PROJECT, load_bugsinpy
 from whippletree.datasets.seeded import load_seeded
 from whippletree.errors import WhippletreeError
 from whippletree.loop import Limits
@@ -89,10 +89,11 @@ def positive_int(text: str) -> int:
     return value
 
 
-def load_cases(dataset: str, case_id: str | None, limit: int | None):
-    """Return (cases, skipped); only bugsinpy can skip cases at load."""
+def load_cases(dataset: str, case_id: str | None, limit: int | None,
+               per_project: int | None = None):
+    """Return (cases, skipped); only bugsinpy can skip cases at load or cap per project."""
     if dataset == "bugsinpy":
-        return load_bugsinpy(case_id=case_id, limit=limit)
+        return load_bugsinpy(case_id=case_id, limit=limit, per_project=per_project)
     cases = load_seeded() if dataset == "seeded" else []
     if case_id:
         cases = [c for c in cases if c.id == case_id]
@@ -100,7 +101,7 @@ def load_cases(dataset: str, case_id: str | None, limit: int | None):
 
 
 def select_cases(args, case_id: str | None):
-    cases, skipped = load_cases(args.dataset, case_id, args.limit)
+    cases, skipped = load_cases(args.dataset, case_id, args.limit, _per_project(args))
     if skipped:
         print(f"whippletree: skipped {len(skipped)} {args.dataset} cases at load "
               f"(reasons in the trace header)", file=sys.stderr)
@@ -110,10 +111,14 @@ def select_cases(args, case_id: str | None):
     return cases, skipped
 
 
+def _per_project(args) -> int | None:
+    return args.per_project if args.dataset == "bugsinpy" else None
+
+
 def _base_header(args, cases, case_id: str | None, skipped) -> dict:
     return dict(
         dataset=args.dataset, git_sha=git_sha(), git_dirty=git_dirty(), version=__version__,
-        argv=args.argv, case_filter=case_id, limit=args.limit,
+        argv=args.argv, case_filter=case_id, limit=args.limit, per_project=_per_project(args),
         dataset_hash=dataset_hash(cases), window=DEFAULT_WINDOW,
         thresholds=DEFAULT_THRESHOLDS, skipped=[asdict(s) for s in skipped],
     )
@@ -242,6 +247,8 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--dataset", choices=DATASETS, required=True)
     review.add_argument("--model", required=True, help="provider:model-id")
     review.add_argument("--limit", type=positive_int)
+    review.add_argument("--per-project", type=positive_int, default=DEFAULT_PER_PROJECT,
+                        help="bugsinpy only: max cases per project (default %(default)s)")
     review.add_argument("--repeat", type=positive_int, default=1)
     review.add_argument("--case", help="run one case by id")
     review.add_argument("--routing", help="OpenRouter backends to pin, comma-separated")
@@ -254,6 +261,8 @@ def build_parser() -> argparse.ArgumentParser:
     baseline.add_argument("--k", type=positive_int, default=3, help="guesses per case")
     baseline.add_argument("--seed", type=int, default=0)
     baseline.add_argument("--limit", type=positive_int)
+    baseline.add_argument("--per-project", type=positive_int, default=DEFAULT_PER_PROJECT,
+                        help="bugsinpy only: max cases per project (default %(default)s)")
     baseline.add_argument("--runs-dir", default="runs")
     baseline.set_defaults(func=cmd_baseline)
 

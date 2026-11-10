@@ -6,6 +6,7 @@ import pytest
 
 from tests.fakes import FakeProvider, call, resp
 from whippletree import cli
+from whippletree.datasets.bugsinpy import DEFAULT_PER_PROJECT
 from whippletree.datasets.seeded import load_seeded
 from whippletree.traces import read_trace
 
@@ -168,14 +169,14 @@ def test_empty_selection_fails_before_trace(tmp_path, capsys, monkeypatch):
     assert not runs.exists()
 
 
-@pytest.mark.parametrize("flag", ["--limit", "--repeat"])
+@pytest.mark.parametrize("flag", ["--limit", "--repeat", "--per-project"])
 def test_review_rejects_non_positive(flag, capsys):
     with pytest.raises(SystemExit) as e:
         cli.main([*REVIEW, flag, "0"])
     assert e.value.code == 2
 
 
-@pytest.mark.parametrize("flag", ["--limit", "--k"])
+@pytest.mark.parametrize("flag", ["--limit", "--k", "--per-project"])
 def test_baseline_rejects_non_positive(flag, capsys):
     with pytest.raises(SystemExit) as e:
         cli.main(["run", "baseline", "--dataset", "seeded", flag, "0"])
@@ -322,8 +323,27 @@ def test_bugsinpy_passes_limit_and_case_through(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(cli, "load_bugsinpy", lambda **kw: (seen.update(kw) or (fake, [])))
     runs = str(tmp_path / "runs")
     cli.main(["run", "baseline", "--dataset", "bugsinpy", "--limit", "5", "--runs-dir", runs])
-    assert seen == {"case_id": None, "limit": 5}
+    assert seen == {"case_id": None, "limit": 5, "per_project": DEFAULT_PER_PROJECT}
 
+
+
+def test_bugsinpy_per_project_flag_reaches_loader_and_header(tmp_path, capsys, monkeypatch):
+    seen = {}
+    fake = [replace(load_seeded()[0], id="bugsinpy/demo/1", dataset="bugsinpy")]
+    monkeypatch.setattr(cli, "load_bugsinpy", lambda **kw: (seen.update(kw) or (fake, [])))
+    runs = str(tmp_path / "runs")
+    cli.main(["run", "baseline", "--dataset", "bugsinpy", "--per-project", "2",
+              "--runs-dir", runs])
+    assert seen["per_project"] == 2
+    header = read_trace(tmp_path / "runs" / f"{_run_id(capsys)}.jsonl")[0]
+    assert header["per_project"] == 2
+
+
+def test_seeded_header_has_no_per_project(tmp_path, capsys):
+    runs = str(tmp_path / "runs")
+    cli.main(["run", "baseline", "--dataset", "seeded", "--runs-dir", runs])
+    header = read_trace(tmp_path / "runs" / f"{_run_id(capsys)}.jsonl")[0]
+    assert header["per_project"] is None
 
 def test_seeded_run_has_no_skip_line(tmp_path, capsys):
     runs = str(tmp_path / "runs")
