@@ -10,8 +10,8 @@ M1 numbers are not comparable to runs on this set. Every model needs re-running.
 
 ## Baseline
 
-| Run id | Model | Recall | Precision | F1 |
-| --- | --- | --- | --- | --- |
-| `20261110T155558Z-dab487` | `baseline:random` (k=3, seed 0) | 0.10 | 0.08 | 0.09 |
+| Run id | Model | git sha | Recall | Precision | F1 |
+| --- | --- | --- | --- | --- | --- |
+| `20261110T211825Z-1e8ec3` | `baseline:random` (k=3, seed 0) | `03a18b5` | 0.10 | 0.08 | 0.09 |
 
-Random recall is up from 0.04 on M1 (4 hits of 39 vs 1 of 24); not investigated, n is tiny. This run was made from an uncommitted tree (`git_dirty`); the case-building code matches what was committed with it.
+Random recall is up from 0.04 on M1 (4 hits of 39 vs 1 of 24); not investigated, n is tiny.
