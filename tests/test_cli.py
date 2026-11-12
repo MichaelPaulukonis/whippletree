@@ -90,6 +90,16 @@ def test_review_header_is_reproducible(tmp_path, capsys, monkeypatch):
     assert len(header["dataset_hash"]) == 64
 
 
+def test_review_token_budget_flag_lands_in_header(tmp_path, capsys, monkeypatch):
+    _fake_review(monkeypatch)
+    runs = str(tmp_path / "runs")
+    assert cli.main([*REVIEW, "--runs-dir", runs]) == 0
+    assert _trace(tmp_path, _run_id(capsys))[0]["limits"]["token_budget"] == 200_000
+    _fake_review(monkeypatch)
+    assert cli.main([*REVIEW, "--token-budget", "400000", "--runs-dir", runs]) == 0
+    assert _trace(tmp_path, _run_id(capsys))[0]["limits"]["token_budget"] == 400_000
+
+
 def test_baseline_header_is_reproducible(tmp_path, capsys):
     argv = ["run", "baseline", "--dataset", "seeded", "--runs-dir", str(tmp_path / "runs")]
     assert cli.main(argv) == 0

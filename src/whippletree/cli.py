@@ -132,7 +132,7 @@ def cmd_review(args) -> int:
     cases, skipped = select_cases(args, args.case)
     routing = args.routing.split(",") if args.routing else None
     provider = make_provider(args.model, routing)
-    limits = Limits()
+    limits = Limits(token_budget=args.token_budget) if args.token_budget else Limits()
     run_id = new_run_id()
     with TraceWriter(_trace_path(args.runs_dir, run_id)) as trace:
         trace.write("header", run_id=run_id, mode="review", model=args.model,
@@ -252,6 +252,8 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--repeat", type=positive_int, default=1)
     review.add_argument("--case", help="run one case by id")
     review.add_argument("--routing", help="OpenRouter backends to pin, comma-separated")
+    review.add_argument("--token-budget", type=positive_int,
+                        help="per-case input+output token cap (default 200000)")
     review.add_argument("--runs-dir", default="runs")
     review.set_defaults(func=cmd_review)
 
