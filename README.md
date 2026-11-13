@@ -2,7 +2,7 @@
 
 Whippletree is a self-built coding-agent harness. Milestone 1 benchmarks code review across models: a reviewer agent reads a PR-style diff containing one known bug, uses read-only tools on the repository, and submits findings. Whippletree scores them against ground truth and logs every model call.
 
-**Status:** the harness runs end to end on a small hand-seeded set and on BugsInPy cases. No benchmark results yet.
+**Status:** first results are in: [five models plus a random baseline on 39 BugsInPy cases](results/2026-11-12-bugsinpy-cheap-vs-frontier.md). Opus 5.5 found 37 of 39 bugs at $0.15 per PR; the cheapest model, Devstral 2512, found 21 at $0.016. Cheap per token is not cheap per bug: the cheap models spend 6-8x the tokens per bug found, and none got within 80% of Opus's recall at <= 20% of its cost. One pass per model, so no variance estimate; this tests H1 without the verifier, which is not built yet.
 
 ![Twenty-six horse combined harvester at work, Washington, 1905](docs/img/twenty-six-horse-combine-1905.jpg)
 
